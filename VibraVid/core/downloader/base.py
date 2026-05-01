@@ -24,7 +24,6 @@ EXTENSION_OUTPUT = config_manager.config.get("PROCESS", "extension")
 MERGE_SUBTITLES = config_manager.config.get_bool("PROCESS", "merge_subtitle")
 MERGE_AUDIO = config_manager.config.get_bool("PROCESS", "merge_audio")
 CLEANUP_TMP = config_manager.config.get_bool("DOWNLOAD", "cleanup_tmp_folder")
-SKIP_DOWNLOAD = config_manager.config.get_bool("DOWNLOAD", "skip_download")
 DEBUG_TRACK_JSON = config_manager.config.get_bool("DEFAULT", "debug_track_json")
 
 
@@ -249,6 +248,7 @@ class BaseDownloader:
             else:
                 self._track_audios_for_copy(audio_tracks)
 
+        subtitle_tracks = self._prepare_subtitle_tracks_for_merge(subtitle_tracks)
         if subtitle_tracks:
             if MERGE_SUBTITLES:
                 current_file = self._merge_subtitle_tracks(
@@ -276,6 +276,10 @@ class BaseDownloader:
         
         console.print("[yellow]Audio merge failed, continuing with video only")
         return current_file
+
+    def _prepare_subtitle_tracks_for_merge(self, subtitle_tracks: list) -> list:
+        """Hook for subclasses to materialize subtitle assets right before subtitle merge."""
+        return subtitle_tracks
 
     def _merge_subtitle_tracks(self, current_file: str, subtitle_tracks: list) -> str:
         """Merge subtitle tracks into the video file. Returns the resulting file path (or original on failure)."""

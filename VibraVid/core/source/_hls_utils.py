@@ -54,6 +54,8 @@ def parse_hls_variant_playlist(content: str, base_url: str) -> Tuple[List[Dict],
                 init_url = urljoin(base_url, uri_m.group(1))
 
         elif line.startswith("#EXTINF:"):
+            dur_m = re.match(r"#EXTINF:([\d.]+)", line)
+            seg_duration = float(dur_m.group(1)) if dur_m else 0.0
             i += 1
             while i < len(lines) and (not lines[i].strip() or lines[i].strip().startswith("#")):
                 i += 1
@@ -63,9 +65,10 @@ def parse_hls_variant_playlist(content: str, base_url: str) -> Tuple[List[Dict],
                 if seg_url and not seg_url.startswith("#"):
                     segments.append(
                         {
-                            "url":    urljoin(base_url, seg_url),
-                            "number": seg_num,
-                            "enc":    dict(current_enc),
+                            "url":      urljoin(base_url, seg_url),
+                            "number":   seg_num,
+                            "enc":      dict(current_enc),
+                            "duration": seg_duration,
                         }
                     )
                     seg_num += 1
@@ -75,3 +78,18 @@ def parse_hls_variant_playlist(content: str, base_url: str) -> Tuple[List[Dict],
         i += 1
 
     return segments, init_url
+
+def parse_hls_live_playlist(content: str, base_url: str) -> Tuple[List[Dict], Optional[str], int, int, bool]:
+    """
+    Parse a live HLS playlist and return all relevant scheduling metadata.
+    """
+    segments, init_url = parse_hls_variant_playlist(content, base_url)
+
+    td_m = re.search(r"#EXT-X-TARGETDURATION:(\d+)", content)
+    target_duration: int = int(td_m.group(1)) if td_m else 6
+
+    seq_m = re.search(r"#EXT-X-MEDIA-SEQUENCE:(\d+)", content)
+    media_sequence: int = int(seq_m.group(1)) if seq_m else 0
+
+    is_ended: bool = "#EXT-X-ENDLIST" in content
+    return segments, init_url, target_duration, media_sequence, is_ended

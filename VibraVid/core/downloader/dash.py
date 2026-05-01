@@ -28,6 +28,7 @@ EXTENSION_OUTPUT = config_manager.config.get("PROCESS", "extension")
 SKIP_DOWNLOAD = config_manager.config.get_bool("DOWNLOAD", "skip_download")
 AUDIO_FILTER = config_manager.config.get("DOWNLOAD", "select_audio")
 SUBTITLE_FILTER = config_manager.config.get("DOWNLOAD", "select_subtitle")
+DELAY_SS = config_manager.config.get_int('DOWNLOAD', 'delay_after_download')
 _WV = "widevine"
 _PR = "playready"
 
@@ -376,13 +377,10 @@ class DASH_Downloader(BaseDownloader):
         keys = None
 
         if pref == _WV and drm_psshs.get("WV"):
-            keys = self.drm_manager.get_wv_keys(drm_psshs["WV"], self.license_url, self.license_certificate, self.license_headers, self.key)
-           
-
+            keys = self.drm_manager.get_wv_keys(drm_psshs["WV"], self.license_url, self.license_data, self.license_certificate, self.license_headers, self.key)
         elif pref == _PR and drm_psshs.get("PR"):
             keys = self.drm_manager.get_pr_keys(drm_psshs["PR"], self.license_url, self.license_headers, self.key, self.license_data)
            
-
         # Final fallback: use a manually provided key
         if not keys and self.key:
             keys = [self.key] if isinstance(self.key, str) else list(self.key)
@@ -426,9 +424,7 @@ class DASH_Downloader(BaseDownloader):
         elif pref == _PR and drm_psshs.get("PR"):
             keys = self.drm_manager.get_pr_keys(drm_psshs["PR"], eff_url, eff_hdrs, self.key, self.license_data)
         return keys or []
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Extra audio tracks
+    
     # ──────────────────────────────────────────────────────────────────────────
     def _download_extra_audios(self) -> tuple[List[Dict], List[Dict]]:
         """Download extra DASH audio tracks from ``other_tracks`` audio entries."""
@@ -613,7 +609,9 @@ class DASH_Downloader(BaseDownloader):
         # ── Download ──────────────────────────────────────────────────────────
         self._log_tracks_json(streams, self.decryption_keys, self.mpd_url)
         if SKIP_DOWNLOAD:
-            console.print("[yellow]Skipping download as per configuration.")
+            if DELAY_SS > 0:
+                console.print(f"\n[yellow]Skipping download as per configuration and sleeping {DELAY_SS} seconds...")
+                time.sleep(DELAY_SS)
             return self.output_path, False
 
         if self.download_id:
@@ -662,5 +660,7 @@ class DASH_Downloader(BaseDownloader):
             return None, True
 
         self._finalize(final_file=final_file)
-        time.sleep(config_manager.config.get_int("DOWNLOAD", "delay_after_download"))
+        if DELAY_SS > 0:
+            console.print(f"\n[green]Sleeping {DELAY_SS} seconds before finishing...")
+            time.sleep(DELAY_SS)
         return self.output_path, False

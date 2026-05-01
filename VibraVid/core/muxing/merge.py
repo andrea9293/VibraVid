@@ -3,6 +3,7 @@
 import os
 import subprocess
 import logging
+from pathlib import Path
 from typing import List, Dict, Any
 
 from rich.console import Console
@@ -14,7 +15,7 @@ from VibraVid.core.utils.language import resolve_iso639_2
 
 from .helper.video import detect_ts_timestamp_issues, convert_ts_to_mp4, resolve_compatible_extension
 from .helper.audio import check_duration_v_a, has_audio, get_video_duration
-from .helper.sub import convert_subtitle
+from .helper.sub import convert_subtitle, extract_vtt_from_wvtt_mp4
 from .capture import capture_ffmpeg_real_time
 
 
@@ -222,6 +223,42 @@ def _apply_compatible_extension(video_path: str, out_path: str) -> str:
     return out_path
 
 
+def _build_global_metadata_flags() -> list:
+    """
+    Build FFmpeg ``-metadata key=value`` flags for the output container, sourcing data from ``context_tracker``.
+    """
+    flags: list = []
+    title = (context_tracker.title or "").strip()
+    media_type = (context_tracker.media_type or "").upper().strip()
+    season = context_tracker.season or 0
+    episode = context_tracker.episode or 0
+    episode_name = (context_tracker.episode_name or "").strip()
+    site_name = (context_tracker.site_name or "").strip()
+
+    is_episode = media_type in ("EPISODE", "TV", "SERIES", "SHOW")
+    if is_episode:
+        ep_title = episode_name or title
+        if ep_title:
+            flags += ["-metadata", f"title={ep_title}"]
+        if title:
+            flags += ["-metadata", f"show={title}"]
+        if season:
+            flags += ["-metadata", f"season_number={season}"]
+        if episode:
+            flags += ["-metadata", f"episode_sort={episode}"]
+        if episode_name:
+            flags += ["-metadata", f"episode_id={episode_name}"]
+    else:
+        if title:
+            flags += ["-metadata", f"title={title}"]
+
+    if site_name:
+        flags += ["-metadata", f"comment={site_name}"]
+
+    flags += ["-metadata", "encoder=VibraVid"]
+    return flags
+
+
 def join_video(video_path: str, out_path: str):
     """
     Mux video file using FFmpeg.
@@ -252,6 +289,7 @@ def join_video(video_path: str, out_path: str):
 
     ffmpeg_cmd.extend(['-i', video_path])
     add_encoding_params(ffmpeg_cmd)
+    ffmpeg_cmd.extend(_build_global_metadata_flags())
     ffmpeg_cmd.extend([out_path, '-y'])
 
     total_duration = get_video_duration(video_path)
@@ -326,15 +364,23 @@ def join_audios(video_path: str, audio_tracks: List[Dict[str, str]], out_path: s
 
     for i, audio_track in enumerate(audio_tracks):
         lang_source = audio_track.get('language') or audio_track.get('name', 'unknown')
-        lang_code = resolve_iso639_2(lang_source)
+        lang_code   = resolve_iso639_2(lang_source)
+        track_title = audio_track.get('name') or lang_source
+
+        # Set audio codec to copy (assuming compatibility, otherwise user should configure PARAM_AUDIO)
         ffmpeg_cmd.extend([f'-metadata:s:a:{i}', f'language={lang_code}'])
-        ffmpeg_cmd.extend([f'-metadata:s:a:{i}', f'title={audio_track.get("name", "unknown")}'])
+        ffmpeg_cmd.extend([f'-metadata:s:a:{i}', f'title={track_title}'])
+        ffmpeg_cmd.extend([f'-metadata:s:a:{i}', f'handler_name={track_title}'])
+
+        # First (highest-priority) audio track is default; others reset to 0
+        ffmpeg_cmd.extend([f'-disposition:a:{i}', 'default' if i == 0 else '0'])
 
     add_encoding_params(ffmpeg_cmd)
 
     if use_shortest:
         ffmpeg_cmd.extend(['-shortest', '-strict', 'experimental'])
 
+    ffmpeg_cmd.extend(_build_global_metadata_flags())
     ffmpeg_cmd.extend([out_path, '-y'])
 
     total_duration = get_video_duration(video_path)
@@ -353,16 +399,16 @@ def join_audios(video_path: str, audio_tracks: List[Dict[str, str]], out_path: s
 
     return out_path, use_shortest, result_json
 
-
 def join_subtitles(video_path: str, subtitles_list: List[Dict[str, str]], out_path: str):
     """
     Joins subtitles with a video file using FFmpeg.
-
+ 
     Parameters:
         - video_path (str): The path to the video file.
-        - subtitles_list (list[dict[str, str]]): A list of dicts with 'path', 'language' keys.
+        - subtitles_list (list[dict[str, str]]): A list of dicts with 'path',
+          'language', and optionally 'is_wvtt_mp4' keys.
         - out_path (str): The path to save the output file.
-
+ 
     Returns:
         tuple: (out_path, result_json)
     """
@@ -370,81 +416,145 @@ def join_subtitles(video_path: str, subtitles_list: List[Dict[str, str]], out_pa
     if subtitle_order:
         subtitles_list = _sort_tracks_by_order(subtitles_list, subtitle_order, ["language", "lang", "name"])
         logger.info(f"Applying configured subtitle order: {subtitle_order}")
-
+ 
+    # ── De-duplicate by resolved path (guards against any upstream double-add) ─
+    seen_paths: set = set()
+    deduped: List[Dict[str, str]] = []
+    for sub in subtitles_list:
+        canonical = os.path.normcase(os.path.abspath(sub.get("path", "")))
+        if canonical in seen_paths:
+            logger.warning(f"join_subtitles: duplicate subtitle path skipped → {os.path.basename(sub.get('path', ''))}")
+            continue
+        seen_paths.add(canonical)
+        deduped.append(sub)
+    subtitles_list = deduped
+ 
+    # ── Pre-process: wvtt-mp4 → vtt extraction + normal conversion ───────────
+    processed: List[Dict[str, str]] = []
     for subtitle in subtitles_list:
-        original_path = subtitle['path']
+        original_path = subtitle["path"]
+ 
+        if subtitle.get("is_wvtt_mp4"):
+
+            # Extract plain VTT from the fMP4 container (defined in helper/sub.py)
+            vtt_path = str(Path(original_path).with_suffix(".vtt"))
+            extracted = extract_vtt_from_wvtt_mp4(original_path, vtt_path)
+            if extracted and os.path.exists(extracted) and os.path.getsize(extracted) > 0:
+                logger.info(f"join_subtitles: wvtt extracted → {os.path.basename(extracted)}")
+                sub = dict(subtitle)
+                sub["path"] = extracted
+                sub["is_wvtt_mp4"] = False
+                processed.append(sub)
+            else:
+                logger.error(f"join_subtitles: wvtt extraction failed for {os.path.basename(original_path)}, skipping")
+            continue
+ 
+        # Normal subtitle: fix extension / convert format
         corrected_path = convert_subtitle(original_path, FORCE_SUBTITLE)
         if not corrected_path:
             corrected_path = original_path
-        subtitle['path'] = corrected_path
-
+        sub = dict(subtitle)
+        sub["path"] = corrected_path
+        processed.append(sub)
+ 
+    if not processed:
+        logger.warning("join_subtitles: no valid subtitle tracks to mux after pre-processing")
+        return join_video(video_path, out_path)
+ 
+    subtitles_list = processed
+ 
+    # ── Build FFmpeg command ──────────────────────────────────────────────────
     ffmpeg_cmd = [get_ffmpeg_path()]
     output_ext = os.path.splitext(out_path)[1].lower()
-
-    # Determine default subtitle codec based on output format
-    if output_ext == '.mp4':
-        subtitle_codec = 'mov_text'
-    elif output_ext == '.mkv':
-        subtitle_codec = 'srt'
+ 
+    if output_ext == ".mp4":
+        subtitle_codec = "mov_text"
+    elif output_ext == ".mkv":
+        subtitle_codec = "srt"
     else:
-        subtitle_codec = 'copy'
-
-    ffmpeg_cmd += ['-i', video_path]
+        subtitle_codec = "copy"
+ 
+    ffmpeg_cmd += ["-i", video_path]
     for subtitle in subtitles_list:
-        ffmpeg_cmd += ['-i', subtitle['path']]
-
-    ffmpeg_cmd += ['-map', '0:v']
+        ffmpeg_cmd += ["-i", subtitle["path"]]
+ 
+    ffmpeg_cmd += ["-map", "0:v"]
     if has_audio(video_path):
-        ffmpeg_cmd += ['-map', '0:a']
-
+        ffmpeg_cmd += ["-map", "0:a"]
+ 
     for idx, subtitle in enumerate(subtitles_list):
-        sub_path = subtitle['path']
-        sub_ext = os.path.splitext(sub_path)[1].lower().lstrip('.')
-        lang_display = subtitle.get('lang', subtitle.get('language', 'unknown'))
-        console.print(f'[yellow]    - [cyan]Subtitle lang [red]{lang_display}.{sub_ext}')
-        ffmpeg_cmd += ['-map', f'{idx + 1}:s']
+        sub_path     = subtitle["path"]
+        sub_ext      = os.path.splitext(sub_path)[1].lower().lstrip(".")
+        lang_display = subtitle.get("lang", subtitle.get("language", "unknown"))
 
-        if output_ext == '.mp4':
-            ffmpeg_cmd += [f'-c:s:{idx}', 'mov_text']
-        elif output_ext == '.mkv':
-            if sub_ext in ['srt', 'vtt']:
-                ffmpeg_cmd += [f'-c:s:{idx}', 'srt']
-            elif sub_ext in ['ass', 'ssa']:
-                ffmpeg_cmd += [f'-c:s:{idx}', 'ass']
+        # ISO 639-2: resolve_iso639_2 already strips _forced/_cc/_sdh via split("_")
+        # e.g. "ita_forced" → "ita",  "en-US" → "eng",  "ita" → "ita"
+        lang_iso = resolve_iso639_2(lang_display)
+
+        console.print(f"[yellow]    - [cyan]Subtitle lang [red]{lang_display}.{sub_ext}")
+        ffmpeg_cmd += ["-map", f"{idx + 1}:s"]
+
+        if output_ext == ".mp4":
+            ffmpeg_cmd += [f"-c:s:{idx}", "mov_text"]
+        elif output_ext == ".mkv":
+            if sub_ext in ("srt", "vtt"):
+                ffmpeg_cmd += [f"-c:s:{idx}", "srt"]
+            elif sub_ext in ("ass", "ssa"):
+                ffmpeg_cmd += [f"-c:s:{idx}", "ass"]
             else:
-                ffmpeg_cmd += [f'-c:s:{idx}', 'copy']
+                ffmpeg_cmd += [f"-c:s:{idx}", "copy"]
         else:
-            ffmpeg_cmd += [f'-c:s:{idx}', 'copy']
+            ffmpeg_cmd += [f"-c:s:{idx}", "copy"]
 
-        ffmpeg_cmd += [f'-metadata:s:s:{idx}', f'title={lang_display}']
-        ffmpeg_cmd += [f'-metadata:s:s:{idx}', f"language={lang_display.split('-')[0].strip()}"]
+        ffmpeg_cmd += [f"-metadata:s:s:{idx}", f"title={lang_display}"]
+        ffmpeg_cmd += [f"-metadata:s:s:{idx}", f"language={lang_iso}"]
+        ffmpeg_cmd += [f"-metadata:s:s:{idx}", f"handler_name={lang_display}"]
 
-    # For subtitle muxing, video and audio streams are always copied
-    ffmpeg_cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', subtitle_codec])
-
-    # Set all subtitle dispositions to disabled by default
+    ffmpeg_cmd.extend(["-c:v", "copy", "-c:a", "copy", "-c:s", subtitle_codec])
+ 
+    # ── Disposizioni subtitle ─────────────────────────────────────────────────
+    # Passo 1: reset everything to 0
     for idx in range(len(subtitles_list)):
-        ffmpeg_cmd.extend([f'-disposition:s:{idx}', '0'])
+        ffmpeg_cmd.extend([f"-disposition:s:{idx}", "0"])
 
-    # Set disposition for matching subtitle language if configured
-    if SUBTITLE_DISPOSITION_LANGUAGE and len(subtitles_list) > 0:
+    # Passo 2: auto-flags (forced / hearing_impaired) da suffissi nel nome lingua
+    # "_forced" → forced,  "_cc" o "_sdh" → hearing_impaired
+    for idx, subtitle in enumerate(subtitles_list):
+        lang_lower = subtitle.get("language", "").lower()
+        is_forced = "_forced" in lang_lower or bool(subtitle.get("forced"))
+        is_hi = "_sdh" in lang_lower or "_cc" in lang_lower or bool(subtitle.get("sdh")) or bool(subtitle.get("cc"))
+
+        if is_forced or is_hi:
+            disp_parts = []
+            if is_forced:
+                disp_parts.append("forced")
+            if is_hi:
+                disp_parts.append("hearing_impaired")
+            ffmpeg_cmd.extend([f"-disposition:s:{idx}", "+".join(disp_parts)])
+
+    # Passo 3: config-driven default (SUBTITLE_DISPOSITION_LANGUAGE, es. "ita_forced")
+    # Questo sovrascrive l'eventuale flag precedente per la traccia corrispondente.
+    if SUBTITLE_DISPOSITION_LANGUAGE and subtitles_list:
         config_lang = SUBTITLE_DISPOSITION_LANGUAGE.lower().strip()
         for idx, subtitle in enumerate(subtitles_list):
-            subtitle_lang = subtitle.get('language', '').lower()
+            subtitle_lang = subtitle.get("language", "").lower()
             if subtitle_lang == config_lang:
-                console.print(f"[yellow]    Setting disposition for subtitle: [red]{subtitle.get('language')}")
-                flags = 'default'
-                if '_forced' in config_lang:
-                    flags += '+forced'
-                ffmpeg_cmd.extend([f'-disposition:s:{idx}', flags])
+                console.print(f"[yellow]    Setting disposition: [red]{subtitle.get('language')}")
+                disp = "default"
+                if "_forced" in config_lang:
+                    disp += "+forced"
+                if "_sdh" in config_lang or "_cc" in config_lang:
+                    disp += "+hearing_impaired"
+                ffmpeg_cmd.extend([f"-disposition:s:{idx}", disp])
                 break
 
-    ffmpeg_cmd += [out_path, '-y']
-
+    ffmpeg_cmd.extend(_build_global_metadata_flags())
+    ffmpeg_cmd += [out_path, "-y"]
+ 
     total_duration = get_video_duration(video_path)
     logger.info(f"Running Join Subtitle command: {' '.join(ffmpeg_cmd)}")
-    result_json = capture_ffmpeg_real_time(ffmpeg_cmd, '[yellow]FFMPEG [cyan]Join subtitle', total_duration)
+    result_json = capture_ffmpeg_real_time(ffmpeg_cmd, "[yellow]FFMPEG [cyan]Join subtitle", total_duration)
     if context_tracker.should_print:
         print()
-
+ 
     return out_path, result_json

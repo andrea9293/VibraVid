@@ -1,5 +1,6 @@
 # 29.01.26
 
+import json
 import base64
 import logging
 
@@ -19,7 +20,7 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-def get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path: str = None, cdm_remote_api: list[str] = None, headers: dict = None, key: str = None, license_certificate: str = None, prefer_remote_cdm: bool = True):
+def get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path: str = None, cdm_remote_api: list[str] = None, headers: dict = None, key: str = None, license_data: dict = None, license_certificate: str = None, prefer_remote_cdm: bool = True):
     """
     Extract Widevine CONTENT keys (KID/KEY) from a license.
 
@@ -30,6 +31,7 @@ def get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path: 
         - cdm_remote_api (list[str]): Remote CDM API config. Optional if using local device.
         - headers (dict): Optional HTTP headers for the license request (from fetch).
         - key (str): Optional raw license data to bypass HTTP request.
+        - license_data (dict): Optional pre-fetched license data.
         - license_certificate (str): Optional base64-encoded SignedMessage for CDM Privacy Mode. If None or empty, set_service_certificate is not called.
         - prefer_remote_cdm (bool): Prefer remote CDM over local. If True and remote config missing, raises error instead of fallback.
 
@@ -64,10 +66,10 @@ def get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path: 
         console.print("[red]Error: Must provide either cdm_device_path or cdm_remote_api.")
         return None
 
-    return _get_widevine_keys(pssh_list, license_url, cdm_device_path, cdm_remote_api, headers, license_certificate)
+    return _get_widevine_keys(pssh_list, license_url, cdm_device_path, cdm_remote_api, headers, license_data, license_certificate)
 
 
-def _get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path: str, cdm_remote_api: list[str], headers: dict = None, license_certificate: str = None):
+def _get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path: str, cdm_remote_api: list[str], headers: dict = None, license_data: dict = None, license_certificate: str = None):
     """Extract Widevine keys using local or remote CDM device."""
     device = None
     cdm = None
@@ -141,9 +143,21 @@ def _get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path:
                 console.print("\n[red]License URL is None.")
                 continue
 
+            if license_data:
+                body = {
+                    **license_data,
+                    "licenseChallenge": base64.b64encode(challenge).decode("utf-8"),
+                }
+                req_headers["Content-Type"] = "text/plain"
+                post_kwargs = {"data": json.dumps(body, separators=(",", ":"))}
+            else:
+                if "Content-Type" not in req_headers:
+                    req_headers["Content-Type"] = "application/octet-stream"
+                post_kwargs = {"data": challenge}
+
             # Make license request
             try:
-                response = create_client(headers=req_headers).post(license_url, data=challenge)
+                response = create_client(headers=req_headers).post(license_url, **post_kwargs)
             except Exception as e:
                 logger.error(f"License request error for {kid_info}: {e}")
                 console.print(f"[red]License request error for PSSH {pssh[:30]}...: {e}")
@@ -161,13 +175,16 @@ def _get_widevine_keys(pssh_list: list[dict], license_url: str, cdm_device_path:
             if "application/json" in content_type:
                 logger.debug(f"Parsing JSON license response for {kid_info}")
                 try:
-                    data = response.json()
-                    if "license" in data:
-                        license_bytes = base64.b64decode(data["license"])
+                    resp_json = response.json()
+                    if "widevineLicense" in resp_json:
+                        license_bytes = base64.b64decode(resp_json["widevineLicense"]["license"])
+                    elif "license" in resp_json:
+                        license_bytes = base64.b64decode(resp_json["license"])
                     else:
-                        logger.error(f"'license' field not found in JSON response for {kid_info}")
-                        console.print(f"[red]'license' field not found in JSON response for PSSH {pssh[:30]}...]")
+                        logger.error(f"No license field in JSON response for {kid_info}: {list(resp_json.keys())}")
+                        console.print(f"[red]No license field in JSON response for PSSH {pssh[:30]}...] — keys: {list(resp_json.keys())}")
                         continue
+                    
                 except Exception as e:
                     logger.error(f"Error parsing JSON license response for {kid_info}: {e}")
                     console.print(f"[red]Error parsing JSON license response for PSSH {pssh[:30]}...: {e}")

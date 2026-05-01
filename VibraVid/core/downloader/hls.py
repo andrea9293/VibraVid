@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 EXTENSION_OUTPUT = config_manager.config.get("PROCESS", "extension")
 SKIP_DOWNLOAD = config_manager.config.get_bool("DOWNLOAD", "skip_download")
+DELAY_SS = config_manager.config.get_int('DOWNLOAD', 'delay_after_download')
 _WV = "widevine"
 _PR = "playready"
 
@@ -269,7 +270,9 @@ class HLS_Downloader(BaseDownloader):
         # ── Download ──────────────────────────────────────────────────────────
         self._log_tracks_json(streams, keys, self.m3u8_url)
         if SKIP_DOWNLOAD:
-            console.print("[yellow]Skipping download as per configuration.")
+            if DELAY_SS > 0:
+                console.print(f"\n[yellow]Skipping download as per configuration and sleeping {DELAY_SS} seconds...")
+                time.sleep(DELAY_SS)
             return self.output_path, False
 
         try:
@@ -310,5 +313,7 @@ class HLS_Downloader(BaseDownloader):
             return None, True
 
         self._finalize(final_file=final_file)
-        time.sleep(config_manager.config.get_int("DOWNLOAD", "delay_after_download"))
+        if DELAY_SS > 0:
+            console.print(f"\n[green]Sleeping {DELAY_SS} seconds before finishing...")
+            time.sleep(DELAY_SS)
         return self.output_path, False

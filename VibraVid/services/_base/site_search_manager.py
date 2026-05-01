@@ -216,6 +216,48 @@ def base_process_search_result(select_title: Optional[Entries], download_film_fu
         
         return True
     
+    # Handle music
+    elif str(select_title.type).lower() == 'song':
+        download_func = download_film_func
+        if not download_func:
+            console.print("[red]Error: download_film_func not provided for song")
+            logger.error("download_film_func not provided for song")
+            return False
+ 
+        download_func(select_title)
+        logger.info(f"Initiating direct download for song: {select_title}")
+ 
+        if table_show_manager:
+            table_show_manager.clear()
+ 
+        return True
+ 
+    # Handle album (uses series pipeline with episode selection)
+    elif str(select_title.type).lower() == 'album':
+        if not download_series_func:
+            console.print("[red]Error: download_series_func not provided for album")
+            logger.error("download_series_func not provided for album")
+            return False
+ 
+        season_selection  = None
+        episode_selection = None
+ 
+        if selections:
+            season_selection  = selections.get('season')
+            episode_selection = selections.get('episode')
+            if not scrape_serie:
+                scrape_serie = selections.get('scrape_serie')
+ 
+        logger.info(f"Initiating album download with season: {season_selection}, episode: {episode_selection}")
+        download_series_func(select_title, season_selection, episode_selection, scrape_serie)
+ 
+        if media_search_manager:
+            media_search_manager.clear()
+        if table_show_manager:
+            table_show_manager.clear()
+ 
+        return True
+    
     else:
         console.print(f"[red]Unknown media type: {select_title.type}")
         logger.error(f"Unknown media type: {select_title.type}")

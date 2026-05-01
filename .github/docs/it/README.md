@@ -22,7 +22,6 @@ _⚡ **Avvio rapido:** `pip install VibraVid && VibraVid`_
 - [Installazione](#installazione)
 - [Avvio rapido](#avvio-rapido)
 - [Login](login.md)
-- [Servizi](add_service.md)
 - [Downloader](#downloader)
 - [Configurazione](#configurazione)
 - [Esempi d'uso](#esempi-duso)

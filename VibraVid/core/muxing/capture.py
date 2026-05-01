@@ -249,7 +249,7 @@ def capture_ffmpeg_real_time(ffmpeg_command: list, description: str, total_durat
             process.wait(timeout=max(wait_timeout_seconds, 1.0))
         except subprocess.TimeoutExpired:
             timed_out = True
-            logger.error("FFmpeg timed out after %.1fs; terminating process", wait_timeout_seconds)
+            logger.error(f"FFmpeg timed out after {wait_timeout_seconds:.1f}s; terminating process")
             terminate_flag.set()
             terminate_process(process)
         except KeyboardInterrupt:

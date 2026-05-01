@@ -22,7 +22,7 @@ from VibraVid.core.utils.selector import StreamSelector, StreamSelectorFormatter
 from VibraVid.core.utils.language import resolve_locale, LANGUAGE_MAP
 from VibraVid.core.utils.stream_selector_ui import InteractiveStreamSelector
 from VibraVid.core.source.subtitle import build_ext_track_label, is_valid_format, ext_from_url, normalize_sub_filename
-from VibraVid.core.utils.codec import VIDEO_EXTENSIONS, AUDIO_EXTENSIONS
+from VibraVid.core.utils.codec import VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS, SUBTITLE_CODEC_MAP
 from VibraVid.core.decryptor import KeysManager
 
 
@@ -121,9 +121,10 @@ class BaseMediaDownloader:
         self._audio_labels: Dict[str, str] = {}
         self._audio_task_keys: List[Tuple[str, str]] = []
         self._sub_labels: Dict[str, str] = {}
+        self._sub_task_keys: List[Tuple[str, str]] = []
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._tmp_dir = self.output_dir / f"{self.filename}_tmp"
+        self._tmp_dir = self.output_dir
         self._tmp_dir.mkdir(exist_ok=True)
 
         if self.download_id:
@@ -146,9 +147,10 @@ class BaseMediaDownloader:
             download_tracker.update_status(self.download_id, "Parsing ...")
 
         url_lower = self.url.lower().split("?")[0]
+        logger.info(f"Parsing manifest: {self.url!r}  auto_select={auto_select}  headers={bool(self.headers)}")
         parser = (
             DashParser(self.url, self.headers)
-            if url_lower.endswith(".mpd")
+            if url_lower.endswith((".mpd", ".mpp"))
             else HLSParser(self.url, self.headers)
         )
         if not parser.fetch_manifest():
@@ -342,27 +344,42 @@ class BaseMediaDownloader:
             self._audio_task_keys.append((task_lang, label))
 
         self._sub_labels = {}
+        self._sub_task_keys = []
+        seen_sub_keys: Set[str] = set()
+ 
         for s in sel_subs:
             label = self._sub_stream_label(s)
             raw = (s.language or "und").lower()
+ 
+            # task_key mirrors _stream_task_key() in downloader.py:
+            #   f"sub_{lang.split('-')[0]}"
+            task_lang = raw.split("-")[0]
+            task_key  = f"sub_{task_lang}"
+ 
             name = (s.name or "").strip()
             if name:
                 self._sub_labels[f"{raw}:{tmdb_client._slugify(name)}"] = label
             self._sub_labels.setdefault(raw, label)
 
+            # Also store under base lang so "en-us" lookup finds the "en" entry
+            self._sub_labels.setdefault(task_lang, label)
+            if task_key not in seen_sub_keys:
+                seen_sub_keys.add(task_key)
+                self._sub_task_keys.append((task_key, label))
+
         logger.info(f"Labels ready -- video={self._video_label!r} audio={list(self._audio_labels)[:4]}  subs={list(self._sub_labels)[:4]}")
 
     @staticmethod
-    def _sub_stream_label(s: Stream) -> str:
+    def _sub_stream_label(s: "Stream") -> str:
         try:
             lang_raw = s.language or "und"
             sfx = re.search(r"[-_](forced|cc|sdh|hi)$", lang_raw, re.I)
             lang_sfx = sfx.group(1).lower() if sfx else ""
-            forced = s.forced   or lang_sfx == "forced"
-            cc     = s.is_cc    or lang_sfx == "cc"
-            sdh    = s.is_sdh   or lang_sfx == "sdh"
+            forced  = s.forced  or lang_sfx == "forced"
+            cc      = s.is_cc   or lang_sfx == "cc"
+            sdh     = s.is_sdh  or lang_sfx == "sdh"
             default = s.default and not forced
-
+ 
             lang = s.resolved_language or lang_raw or "und"
             parts = [f"[bold white]{lang}[/bold white]"]
             flags = []
@@ -376,9 +393,23 @@ class BaseMediaDownloader:
                 flags.append("[DEFAULT]")
             if flags:
                 parts.append(f"[bold red]{' '.join(flags)}[/bold red]")
-
-            ext = "vtt" if s.type == "subtitle" else "m4a"
-            return f"[yellow]\\[{ext}][/yellow] {' '.join(parts)}"
+ 
+            # ── ext tag: derive the real format, never show "dash" ────────────
+            if getattr(s, "is_wvtt_mp4", False):
+                ext_tag = "WVTT"
+            else:
+                # s.format is set by the parser; "dash" is the uninitialised
+                # placeholder — ignore it and fall back to codec or "VTT"
+                fmt = (s.format or "").lower().strip()
+                _IGNORE = {"dash", ""}
+                if fmt not in _IGNORE:
+                    ext_tag = fmt.upper()
+                else:
+                    # Try to derive from codec string
+                    codec_lc = (s.codecs or "").lower().strip()
+                    ext_tag = SUBTITLE_CODEC_MAP.get(codec_lc, "VTT")
+ 
+            return f"[yellow]\\[{ext_tag}][/yellow] {' '.join(parts)}"
         except Exception:
             return s.language or "und"
 
@@ -386,21 +417,27 @@ class BaseMediaDownloader:
         tasks: List[Tuple[str, str]] = []
         if self._has_video:
             tasks.append((self._video_task_key, f"[bold cyan]Vid[/bold cyan] {self._video_label}"))
-
+ 
         seen: Set[str] = set()
         for lang_code, label in self._audio_task_keys:
             key = f"aud_{lang_code}"
             if key not in seen:
                 seen.add(key)
                 tasks.append((key, f"[bold cyan]Aud[/bold cyan] {label}"))
-        
+ 
+        # ── Subtitle media streams (wvtt-mp4 and any other non-external subs) ─
+        for task_key, label in self._sub_task_keys:
+            if task_key not in seen:
+                seen.add(task_key)
+                tasks.append((task_key, f"[bold cyan]Sub[/bold cyan] {label}"))
+ 
         return tasks
 
     def _promote_hls_subtitles_to_external(self) -> None:
         """Move selected HLS subtitle streams into self.external_subtitles."""
         new_ext_subs: List[Dict] = []
         for s in self.streams:
-            if s.type == "subtitle" and s.selected and not s.is_external:
+            if s.type == "subtitle" and s.selected and not s.is_external and self.manifest_type == "HLS":
                 sub_url = s.playlist_url or (s.segments[0].url if s.segments else None)
                 if not sub_url:
                     continue
@@ -451,7 +488,6 @@ class BaseMediaDownloader:
             _track["_label"]    = _label
             bar_manager.add_external_track_task(_label, _task_key)
 
-    
     def _build_status(self, ext_subs: List, ext_auds: List = None) -> Dict:
         status: Dict[str, Any] = {
             "video": None,
@@ -461,22 +497,56 @@ class BaseMediaDownloader:
             "external_audios": ext_auds or [],
             "other_tracks": list(getattr(self, "other_tracks", []) or []),
         }
+
         for f in sorted(self.output_dir.iterdir()):
             if not f.is_file():
                 continue
-            
+
             ext = f.suffix.lower()
             fname_l = self.filename.lower()
 
+            # ── video ────────────────────────────────────────────────────────
             if ext in VIDEO_EXTENSIONS and f.stem.lower() == fname_l:
                 if status["video"] is None:
                     status["video"] = {"path": str(f), "size": f.stat().st_size}
                 continue
 
+            # ── audio ────────────────────────────────────────────────────────
             if ext in AUDIO_EXTENSIONS and f.name.lower().startswith(fname_l):
                 if status["video"] and Path(status["video"]["path"]).name == f.name:
                     continue
                 track_name = f.stem[len(self.filename):].lstrip(".")
                 status["audios"].append({"path": str(f), "name": track_name, "size": f.stat().st_size})
+                continue
+
+            stem_lower = f.stem.lower()   # e.g. "filename.en"
+
+            # ── wvtt-mp4 subtitles ───────────────────────────────────────────
+            if ext in (".wvtt", ".mp4") and stem_lower.startswith(fname_l + "."):
+                if status["video"] and Path(status["video"]["path"]).name == f.name:
+                    continue
+                lang_part = stem_lower[len(fname_l) + 1:]
+                status["subtitles"].append({
+                    "path":        str(f),
+                    "language":    lang_part,
+                    "type":        "wvtt",
+                    "size":        f.stat().st_size,
+                    "is_wvtt_mp4": True,
+                })
+                continue
+
+            # ── plain-text DASH subtitles (vtt, ttml, srt, …) ───────────────
+            # Naming: {filename}.{lang}.{ext}  e.g. "show.cs-cz.vtt"
+            if ext in SUBTITLE_EXTENSIONS and stem_lower.startswith(fname_l + "."):
+                lang_part = stem_lower[len(fname_l) + 1:]  # e.g. "cs-cz"
+                fmt = ext.lstrip(".")                       # e.g. "vtt"
+                status["subtitles"].append({
+                    "path":     str(f),
+                    "language": lang_part,
+                    "name":     lang_part,
+                    "type":     fmt,
+                    "size":     f.stat().st_size,
+                })
+                continue
 
         return status

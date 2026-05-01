@@ -37,14 +37,14 @@ def run_with_progress(cmd: list, label: str, encrypted_path: str, output_path: s
         ``True`` on success (exit-code 0 and output file > 1 kB).
         ``(False, stderr_text)`` on failure.
     """
-    file_size             = os.path.getsize(encrypted_path) if os.path.isfile(encrypted_path) else 0
-    progress_percent      = 0
+    file_size = os.path.getsize(encrypted_path) if os.path.isfile(encrypted_path) else 0
+    progress_percent = 0
     last_rendered_percent = -1
-    stop_monitor          = threading.Event()
-    last_progress_update  = time.monotonic()
+    stop_monitor = threading.Event()
+    last_progress_update = time.monotonic()
     last_observed_percent = -1
-    process_holder        = {"process": None}
-    task_key              = f"decrypt_{os.path.basename(output_path)}"
+    process_holder = {"process": None}
+    task_key = f"decrypt_{os.path.basename(output_path)}"
 
     def _emit(percent: int, current_size: int) -> None:
         if progress_cb is None:
@@ -53,15 +53,15 @@ def run_with_progress(cmd: list, label: str, encrypted_path: str, output_path: s
         try:
             progress_cb(
                 {
-                    "task_key":        task_key,
-                    "label":           label,
-                    "pct":             percent,
-                    "segments":        f"{percent}/100",
+                    "task_key": task_key,
+                    "label": label,
+                    "pct": percent,
+                    "segments": f"{percent}/100",
                     "compact_metrics": True,
                 }
             )
         except Exception as exc:
-            logger.debug("progress_cb error for %s: %s", task_key, exc)
+            logger.debug(f"progress_cb error for {task_key}: {exc}")
 
     def _monitor() -> None:
         nonlocal progress_percent, last_progress_update, last_observed_percent

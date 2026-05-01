@@ -10,10 +10,12 @@ from VibraVid.utils import config_manager
 from VibraVid.core.utils.language import resolve_locale
 from VibraVid.core.source.bridge import run_download_plan
 
+from VibraVid.core.utils.codec import SUBTITLE_EXTENSIONS, AUDIO_EXTENSIONS
+
 
 logger = logging.getLogger("SubtitleDownloader")
-VALID_SUBTITLE_FORMATS = {"vtt", "srt", "ass", "ssa", "ttml2", "ttml", "xml", "dfxp"}
-VALID_AUDIO_FORMATS = {"m4a", "aac", "mp3", "webm", "mp4"}
+VALID_SUBTITLE_FORMATS = {ext.lstrip(".") for ext in SUBTITLE_EXTENSIONS}
+VALID_AUDIO_FORMATS = {ext.lstrip(".") for ext in AUDIO_EXTENSIONS}
 
 
 def is_valid_format(fmt: str, track_type: str) -> bool:

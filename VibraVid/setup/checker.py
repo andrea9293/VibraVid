@@ -36,13 +36,13 @@ def check_bento4() -> Optional[str]:
     # STEP 1: Check system PATH
     binary_path = shutil.which(binary_exec)
     if binary_path:
-        logger.debug("Found %s in system PATH (%s)", binary_exec, binary_path)
+        logger.debug(f"Found {binary_exec} in system PATH ({binary_path})")
         return binary_path
 
     # STEP 2: Check local binary directory
     binary_local = binary_paths.get_binary_path("bento4", binary_exec)
     if binary_local and os.path.isfile(binary_local):
-        logger.debug("Found %s in local binary directory (%s)", binary_exec, binary_local)
+        logger.debug(f"Found {binary_exec} in local binary directory ({binary_local})")
         return binary_local
 
     # STEP 3: Download (only if installation level includes bento4)
@@ -52,10 +52,10 @@ def check_bento4() -> Optional[str]:
 
     binary_downloaded = binary_paths.download_binary("bento4", binary_exec)
     if binary_downloaded:
-        logger.debug("Downloaded %s to %s", binary_exec, binary_downloaded)
+        logger.debug(f"Downloaded {binary_exec} to {binary_downloaded}")
         return binary_downloaded
 
-    logger.error("Failed to download %s", binary_exec)
+    logger.error(f"Failed to download {binary_exec}")
     console.print(f"Failed to download {binary_exec}", style="red")
     return None
 
@@ -70,13 +70,13 @@ def check_mp4dump() -> Optional[str]:
     # STEP 1: Check system PATH
     binary_path = shutil.which(binary_exec)
     if binary_path:
-        logger.debug("Found %s in system PATH (%s)", binary_exec, binary_path)
+        logger.debug(f"Found {binary_exec} in system PATH ({binary_path})")
         return binary_path
 
     # STEP 2: Check local binary directory
     binary_local = binary_paths.get_binary_path("bento4", binary_exec)
     if binary_local and os.path.isfile(binary_local):
-        logger.debug("Found %s in local binary directory (%s)", binary_exec, binary_local)
+        logger.debug(f"Found {binary_exec} in local binary directory ({binary_local})")
         return binary_local
 
     # STEP 3: Download (only if installation level includes bento4)
@@ -86,10 +86,10 @@ def check_mp4dump() -> Optional[str]:
 
     binary_downloaded = binary_paths.download_binary("bento4", binary_exec)
     if binary_downloaded:
-        logger.debug("Downloaded %s to %s", binary_exec, binary_downloaded)
+        logger.debug(f"Downloaded {binary_exec} to {binary_downloaded}")
         return binary_downloaded
 
-    logger.error("Failed to download %s", binary_exec)
+    logger.error(f"Failed to download {binary_exec}")
     console.print(f"Failed to download {binary_exec}", style="red")
     return None
 
@@ -107,14 +107,14 @@ def check_ffmpeg() -> Tuple[Optional[str], Optional[str]]:
     ffmpeg_path = shutil.which(ffmpeg_name)
     ffprobe_path = shutil.which(ffprobe_name)
     if ffmpeg_path and ffprobe_path:
-        logger.debug("Found ffmpeg (%s) and ffprobe (%s) in system PATH", ffmpeg_path, ffprobe_path)
+        logger.debug(f"Found ffmpeg ({ffmpeg_path}) and ffprobe ({ffprobe_path}) in system PATH")
         return ffmpeg_path, ffprobe_path
 
     # STEP 2: Check binary directory
     ffmpeg_local = binary_paths.get_binary_path("ffmpeg", ffmpeg_name)
     ffprobe_local = binary_paths.get_binary_path("ffmpeg", ffprobe_name)
     if ffmpeg_local and os.path.isfile(ffmpeg_local) and ffprobe_local and os.path.isfile(ffprobe_local):
-        logger.debug("Found ffmpeg (%s) and ffprobe (%s) in local binary directory", ffmpeg_local, ffprobe_local)
+        logger.debug(f"Found ffmpeg ({ffmpeg_local}) and ffprobe ({ffprobe_local}) in local binary directory")
         return ffmpeg_local, ffprobe_local
 
     # STEP 3: Download (only if installation level includes ffmpeg)
@@ -125,7 +125,7 @@ def check_ffmpeg() -> Tuple[Optional[str], Optional[str]]:
     ffmpeg_downloaded = binary_paths.download_binary("ffmpeg", ffmpeg_name)
     ffprobe_downloaded = binary_paths.download_binary("ffmpeg", ffprobe_name)
     if ffmpeg_downloaded and ffprobe_downloaded:
-        logger.debug("Downloaded ffmpeg (%s) and ffprobe (%s)", ffmpeg_downloaded, ffprobe_downloaded)
+        logger.debug(f"Downloaded ffmpeg ({ffmpeg_downloaded}) and ffprobe ({ffprobe_downloaded})")
         return ffmpeg_downloaded, ffprobe_downloaded
 
     logger.error("Failed to download FFmpeg")
@@ -144,13 +144,13 @@ def check_shaka_packager() -> Optional[str]:
     # STEP 1: Check system PATH
     packager_path = shutil.which(packager_name)
     if packager_path:
-        logger.debug("Found Shaka Packager in system PATH (%s)", packager_path)
+        logger.debug(f"Found Shaka Packager in system PATH ({packager_path})")
         return packager_path
 
     # STEP 2: Check binary directory
     packager_local = binary_paths.get_binary_path("shaka_packager", packager_name)
     if packager_local and os.path.isfile(packager_local):
-        logger.debug("Found Shaka Packager in local binary directory (%s)", packager_local)
+        logger.debug(f"Found Shaka Packager in local binary directory ({packager_local})")
         return packager_local
 
     # STEP 3: Download (only if installation level includes shaka_packager)
@@ -160,7 +160,7 @@ def check_shaka_packager() -> Optional[str]:
 
     packager_downloaded = binary_paths.download_binary("shaka_packager", packager_name)
     if packager_downloaded:
-        logger.debug("Downloaded Shaka Packager to %s", packager_downloaded)
+        logger.debug(f"Downloaded Shaka Packager to {packager_downloaded}")
         return packager_downloaded
 
     logger.error("Failed to download Shaka Packager")
@@ -179,13 +179,13 @@ def check_dovi_tool() -> Optional[str]:
     # STEP 1: Check system PATH
     binary_path = shutil.which(binary_exec)
     if binary_path:
-        logger.debug("Found %s in system PATH (%s)", binary_exec, binary_path)
+        logger.debug(f"Found {binary_exec} in system PATH ({binary_path})")
         return binary_path
 
     # STEP 2: Check local binary directory
     binary_local = binary_paths.get_binary_path("dovi_tool", binary_exec)
     if binary_local and os.path.isfile(binary_local):
-        logger.debug("Found %s in local binary directory (%s)", binary_exec, binary_local)
+        logger.debug(f"Found {binary_exec} in local binary directory ({binary_local})")
         return binary_local
 
     # STEP 3: Download (only if installation level includes dovi_tool)
@@ -195,10 +195,10 @@ def check_dovi_tool() -> Optional[str]:
 
     binary_downloaded = binary_paths.download_binary("dovi_tool", binary_exec)
     if binary_downloaded:
-        logger.debug("Downloaded %s to %s", binary_exec, binary_downloaded)
+        logger.debug(f"Downloaded {binary_exec} to {binary_downloaded}")
         return binary_downloaded
 
-    logger.error("Failed to download %s", binary_exec)
+    logger.error(f"Failed to download {binary_exec}")
     console.print(f"Failed to download {binary_exec}", style="red")
     return None
 
@@ -214,13 +214,13 @@ def check_mkvmerge() -> Optional[str]:
     # STEP 1: Check system PATH
     binary_path = shutil.which(binary_exec)
     if binary_path:
-        logger.debug("Found %s in system PATH (%s)", binary_exec, binary_path)
+        logger.debug(f"Found {binary_exec} in system PATH ({binary_path})")
         return binary_path
 
     # STEP 2: Check local binary directory
     binary_local = binary_paths.get_binary_path("mkvtoolnix", binary_exec)
     if binary_local and os.path.isfile(binary_local):
-        logger.debug("Found %s in local binary directory (%s)", binary_exec, binary_local)
+        logger.debug(f"Found {binary_exec} in local binary directory ({binary_local})")
         return binary_local
 
     # STEP 3: Download (only if installation level includes mkvtoolnix)
@@ -230,10 +230,10 @@ def check_mkvmerge() -> Optional[str]:
 
     binary_downloaded = binary_paths.download_binary("mkvtoolnix", binary_exec)
     if binary_downloaded:
-        logger.debug("Downloaded %s to %s", binary_exec, binary_downloaded)
+        logger.debug(f"Downloaded {binary_exec} to {binary_downloaded}")
         return binary_downloaded
 
-    logger.error("Failed to download %s", binary_exec)
+    logger.error(f"Failed to download {binary_exec}")
     console.print(f"Failed to download {binary_exec}", style="red")
     return None
 
@@ -244,13 +244,13 @@ def check_velora() -> Optional[str]:
     # STEP 1: Check system PATH
     binary_path = shutil.which(binary_exec)
     if binary_path:
-        logger.debug("Found %s in system PATH (%s)", binary_exec, binary_path)
+        logger.debug(f"Found {binary_exec} in system PATH ({binary_path})")
         return binary_path
 
     # STEP 2: Check local binary directory
     binary_local = binary_paths.get_binary_path("velora", binary_exec)
     if binary_local and os.path.isfile(binary_local):
-        logger.debug("Found %s in local binary directory (%s)", binary_exec, binary_local)
+        logger.debug(f"Found {binary_exec} in local binary directory ({binary_local})")
         return binary_local
 
     # STEP 3: Download (only if installation level includes velora)
@@ -260,9 +260,9 @@ def check_velora() -> Optional[str]:
 
     binary_downloaded = binary_paths.download_binary("velora", binary_exec)
     if binary_downloaded:
-        logger.debug("Downloaded %s to %s", binary_exec, binary_downloaded)
+        logger.debug(f"Downloaded {binary_exec} to {binary_downloaded}")
         return binary_downloaded
 
-    logger.error("Failed to download %s", binary_exec)
+    logger.error(f"Failed to download {binary_exec}")
     console.print(f"Failed to download {binary_exec}", style="red")
     return None

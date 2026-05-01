@@ -105,6 +105,7 @@ class DRMManager:
                     kid_val = parts[0].replace("-", "").strip()
                     key_val = parts[1].replace("-", "").strip()
                     manual_keys.append(f"{kid_val}:{key_val}")
+            
             if manual_keys:
                 missing = self._missing_kids(all_kids, manual_keys)
                 if missing:
@@ -119,6 +120,7 @@ class DRMManager:
                     for i in pssh_list
                     if i.get("kid") and i["kid"] != "N/A" and i.get("label")
                 } or None
+
                 self._store_keys(manual_keys, drm_type, base_license_url, pssh_val, kid_to_label, source=None)
                 return KeysManager(manual_keys)
 
@@ -132,61 +134,81 @@ class DRMManager:
         } or None
 
         # Step 1: vault lookup with license_url
+        vault_keys: list[str] = []
+        vault_source = None
+
         if self._vaults and base_license_url and all_kids:
             logger.info(f"Looking up {len(all_kids)} {drm_type} KID(s) across {len(self._vaults)} vault(s)")
-            found_keys, source = self._db_lookup(all_kids, base_license_url, drm_type, pssh_val)
-            unique_keys = list(set(found_keys))
-            
-            if unique_keys:
-                self._store_keys(unique_keys, drm_type, base_license_url, pssh_val, kid_to_label, source=source)
-            if set(all_kids).issubset({k.split(":")[0].strip().lower() for k in unique_keys}):
-                logger.info(f"{drm_type} keys found in vault(s): {len(unique_keys)} key(s)")
-                return KeysManager(unique_keys)
+            found_keys, vault_source = self._db_lookup(all_kids, base_license_url, drm_type, pssh_val)
+            vault_keys = list(set(found_keys))
+
+            if vault_keys:
+                self._store_keys(vault_keys, drm_type, base_license_url, pssh_val, kid_to_label, source=vault_source)
+
+            if set(all_kids).issubset({k.split(":")[0].strip().lower() for k in vault_keys}):
+                logger.info(f"{drm_type} keys found in vault(s): {len(vault_keys)} key(s)")
+                return KeysManager(vault_keys)
 
         # Step 2: If no license_url but DRM detected → try generic lookup in database
         if not license_url and all_kids and self._vaults:
             logger.warning(f"DRM detected but missing license_url. Searching database for {len(all_kids)} {drm_type} KID(s) using 'generic' lookup")
-            found_keys, source = self._db_lookup(all_kids, "generic", drm_type, pssh_val)
-            unique_keys = list(set(found_keys))
+            found_keys, vault_source = self._db_lookup(all_kids, "generic", drm_type, pssh_val)
+            vault_keys = list(set(found_keys))
 
-            if unique_keys and set(all_kids).issubset({k.split(":")[0].strip().lower() for k in unique_keys}):
-                logger.info(f"{drm_type} keys found in vault(s) via generic lookup: {len(unique_keys)} key(s)")
-                return KeysManager(unique_keys)
-            elif unique_keys:
-                logger.warning(f"Found {len(unique_keys)} {drm_type} key(s) but not all KIDs covered. Partial match: {unique_keys}")
+            if vault_keys and set(all_kids).issubset({k.split(":")[0].strip().lower() for k in vault_keys}):
+                logger.info(f"{drm_type} keys found in vault(s) via generic lookup: {len(vault_keys)} key(s)")
+                return KeysManager(vault_keys)
+            
+            elif vault_keys:
+                logger.warning(f"Found {len(vault_keys)} {drm_type} key(s) but not all KIDs covered. Partial match: {vault_keys}")
 
-        # Step 3: CDM extraction
+        # Step 3: CDM extraction — only for KIDs not already covered by vault
         if USE_CDM:
             try:
-                keys = cdm_fn(pssh_list, license_url, **cdm_kwargs)
-                if keys:
-                    logger.info(f"{drm_type} CDM extraction successful: {len(keys.get_keys_list())} key(s)")
-                    missing = self._missing_kids(all_kids, keys.get_keys_list())
-                    if missing:
-                        msg = f"Missing {drm_type} key for KID(s): {', '.join(missing)}. Decryption cannot occur!"
-                        logger.warning(msg)
-                        console.print(f"[bold yellow]WARNING: {msg}[/bold yellow]")
-                    
-                    self._store_keys(keys.get_keys_list(), drm_type, base_license_url, pssh_val, kid_to_label, source=None)
-                    return keys
+                vault_covered = {k.split(":")[0].strip().lower() for k in vault_keys}
+                missing_kids  = [kid for kid in all_kids if kid not in vault_covered]
 
-                logger.error(f"{drm_type} CDM extraction returned no keys. Missing keys for KIDs: {', '.join(all_kids)}. Decryption cannot occur!")
-                console.print(f"[bold red]WARNING: Missing {drm_type} key for KID(s): {', '.join(all_kids)}. Decryption cannot occur![/bold red]")
-                return None
+                if missing_kids:
+                    # Filter pssh_list to only the PSSHs whose KID is still missing
+                    missing_pssh_list = [
+                        item for item in pssh_list
+                        if item.get("kid", "").replace("-", "").strip().lower() in missing_kids
+                    ] or pssh_list  # safety: if filtering gives empty, use full list
+                    logger.info(f"{drm_type} CDM extraction for {len(missing_kids)} missing KID(s): {missing_kids}")
+                    cdm_result = cdm_fn(missing_pssh_list, license_url, **cdm_kwargs)
+                
+                else:
+                    cdm_result = None
+
+                if cdm_result:
+                    cdm_keys = cdm_result.get_keys_list()
+
+                    # Merge: vault keys + CDM keys (CDM may return extras like b770…, keep all)
+                    all_keys = list({k.split(":")[0]: k for k in vault_keys + cdm_keys}.values())
+                    logger.info(f"{drm_type} CDM extraction successful: {len(cdm_keys)} new key(s), {len(all_keys)} total")
+                    self._store_keys(all_keys, drm_type, base_license_url, pssh_val, kid_to_label, source=None)
+                    return KeysManager(all_keys)
+                
+                elif vault_keys:
+                    # CDM returned nothing new but we have partial vault keys — return those
+                    logger.warning(f"{drm_type} CDM returned no new keys; returning {len(vault_keys)} vault key(s)")
+                    return KeysManager(vault_keys)
+
+                logger.error(f"{drm_type} CDM extraction returned no keys")
+                console.print("[yellow]CDM extraction returned no keys")
 
             except Exception as e:
                 logger.error(f"{drm_type} CDM error: {e}")
                 console.print(f"[red]CDM error: {e}")
 
-            logger.error(f"All {drm_type} extraction methods failed. Missing keys for KIDs: {', '.join(all_kids)}. Decryption cannot occur!")
-            console.print(f"\n[bold red]WARNING: Missing {drm_type} key for KID(s): {', '.join(all_kids)}. Decryption cannot occur![/bold red]")
+            logger.error(f"All {drm_type} extraction methods failed")
+            console.print(f"\n[red]All extraction methods failed for {drm_type}")
             return None
+        
         else:
-            logger.error(f"CDM extraction disabled. Missing {drm_type} keys for KIDs: {', '.join(all_kids)}. Decryption cannot occur!")
-            console.print(f"[bold red]WARNING: Missing {drm_type} key for KID(s): {', '.join(all_kids)}. Decryption cannot occur![/bold red]")
-            return None
+            console.print("[yellow]CDM extraction disabled by config.")
 
-    def get_wv_keys(self, pssh_list: list[dict], license_url: str, license_certificate: str = None, headers: dict = None, key: str = None):
+    def get_wv_keys(self, pssh_list: list[dict], license_url: str, license_data: dict = None, license_certificate: str = None, headers: dict = None, key: str = None):
         """
         Get Widevine keys.
         """
@@ -198,6 +220,7 @@ class DRMManager:
                 cdm_remote_api=self.widevine_remote_cdm_api,
                 headers=headers,
                 key=key,
+                license_data=license_data,
                 license_certificate=license_certificate,
                 prefer_remote_cdm=self.prefer_remote_cdm,
             ),
@@ -221,3 +244,50 @@ class DRMManager:
             ),
             key=key,
         )
+    
+    def add_keys(self, keys: list[str], drm_type: str, license_url: str, pssh: str = None, kid_to_label: Optional[dict] = None) -> dict[str, int]:
+        """
+        Manually push one or more keys to all connected vaults.
+
+        Args:
+            keys:         List of "kid:key" strings (e.g. ["abc123:def456"]).
+            drm_type:     DRM type string, e.g. "widevine" or "playready".
+            license_url:  License server URL (query params are stripped automatically).
+            pssh:         Optional PSSH blob associated with these keys.
+            kid_to_label: Optional mapping {kid_hex: label} for track labelling.
+
+        Returns:
+            dict[str, int]: {vault_name: keys_added} for each vault that accepted the call.
+        """
+        if not keys:
+            logger.warning("add_keys called with empty keys list — nothing to store.")
+            return {}
+
+        # Validate format
+        valid_keys = []
+        for entry in keys:
+            if ":" not in entry:
+                logger.warning(f"Skipping malformed key entry (expected 'kid:key'): {entry!r}")
+                console.print(f"[yellow]Skipping malformed key: {entry!r}")
+                continue
+            valid_keys.append(entry)
+
+        if not valid_keys:
+            console.print("[red]No valid keys to store.")
+            return {}
+
+        base_license_url = self._clean_license_url(license_url) if license_url else "generic"
+        results: dict[str, int] = {}
+
+        for name, vdb in self._vaults:
+            logger.info(f"[add_keys] Storing {len(valid_keys)} {drm_type} key(s) to {name}")
+            try:
+                added = vdb.set_keys(valid_keys, drm_type, base_license_url, pssh, kid_to_label)
+                results[name] = added
+                console.print(f"[green]✓ {name}[/green]: {added} key(s) stored")
+            except Exception as e:
+                logger.error(f"[add_keys] Failed to store to {name}: {e}")
+                console.print(f"[red]✗ {name}: {e}")
+                results[name] = 0
+
+        return results

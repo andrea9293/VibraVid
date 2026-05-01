@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from VibraVid.core.muxing.hybrid import probe_media_file
+from VibraVid.core.source.downloader import MediaDownloader as ManualMediaDownloader
 
 
 logger = logging.getLogger(__name__)
@@ -111,18 +112,16 @@ def download_other_tracks(
     hybrid_tmp = output_dir / f"{filename}_hybrid_tmp"
     hybrid_tmp.mkdir(parents=True, exist_ok=True)
 
-    from VibraVid.core.source.manual import MediaDownloader as ManualMediaDownloader
-
     for index, raw_track in enumerate(other_tracks, 1):
         track = dict(raw_track or {})
         kind, tag = _split_track_type(track.get("type", ""))
         if kind not in {"video", "audio"}:
-            logger.info("Skipping unsupported other_track type: %s", track.get("type"))
+            logger.info(f'Skipping unsupported other_track type: {track.get("type")}')
             continue
 
         url = track.get("url")
         if not url:
-            logger.warning("Skipping other_track without url: %s", track)
+            logger.warning(f"Skipping other_track without url: {track}")
             continue
 
         label_token = _safe_token(tag or track.get("language") or str(index))
@@ -131,7 +130,7 @@ def download_other_tracks(
         track_dir.mkdir(parents=True, exist_ok=True)
 
         label = _track_label(track, kind, tag)
-        logger.info("Downloading other track with manual backend: %s (%s)", label, url)
+        logger.info(f"Downloading other track with manual backend: {label} ({url})")
 
         downloader = ManualMediaDownloader(
             url=url,
@@ -150,26 +149,26 @@ def download_other_tracks(
             downloader.parse_stream(show_table=False)
             result = downloader.start_download(show_progress=True)
         except Exception as exc:
-            logger.error("Other track download failed (%s): %s", label, exc, exc_info=True)
+            logger.error(f"Other track download failed ({label}): {exc}", exc_info=True)
             continue
 
         if result.get("error") == "cancelled":
-            logger.info("Other track download cancelled (%s)", label)
+            logger.info(f"Other track download cancelled ({label})")
             continue
 
         downloaded = _pick_status_entry(result, kind)
         if not downloaded:
-            logger.error("Output not found for other track after download: %s", track_filename)
+            logger.error(f"Output not found for other track after download: {track_filename}")
             continue
 
         out_path_str = str(downloaded.get("path") or "").strip()
         if not out_path_str:
-            logger.error("Output path missing for other track: %s", track_filename)
+            logger.error(f"Output path missing for other track: {track_filename}")
             continue
 
         out_path = Path(out_path_str)
         if not out_path.exists():
-            logger.error("Output path missing for other track: %s", out_path)
+            logger.error(f"Output path missing for other track: {out_path}")
             continue
 
         size = out_path.stat().st_size
@@ -191,15 +190,8 @@ def download_other_tracks(
 
         results.append(entry)
 
-        logger.info("Downloaded other track %s -> %s", label, out_path.name)
+        logger.info(f"Downloaded other track {label} -> {out_path.name}")
         if probe:
-            logger.info(
-                "Probe other track %s: hdr=%s dolby_vision=%s video_codec=%s base_info=%s",
-                label,
-                probe.get("hdr"),
-                probe.get("dolby_vision"),
-                probe.get("video_codec"),
-                probe.get("base_info"),
-            )
+            logger.info(f'Probe other track {label}: hdr={probe.get("hdr")} dolby_vision={probe.get("dolby_vision")} video_codec={probe.get("video_codec")} base_info={probe.get("base_info")}')
 
     return results

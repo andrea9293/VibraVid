@@ -5,6 +5,7 @@ import re
 import json
 import logging
 import platform
+import shutil
 import subprocess
 import xml.etree.ElementTree as et
 from typing import Optional, List
@@ -18,7 +19,9 @@ from ttconv.srt.config import SRTWriterConfiguration
 from ttconv.vtt.config import VTTWriterConfiguration
 
 from VibraVid.setup import get_ffprobe_path, get_ffmpeg_path
+from VibraVid.core.utils.codec import get_codec_extension
 from .font import FontManager
+
 
 # suppress ttconv logging (Merging ISD paragraphs/regions)
 logging.getLogger("ttconv").setLevel(logging.WARNING)
@@ -235,20 +238,7 @@ def detect_subtitle_format(subtitle_path: str) -> Optional[str]:
             streams = data.get("streams", [])
             if streams:
                 codec = streams[0].get("codec_name", "").lower()
-                
-                # Map common ffmpeg subtitle codec names to our target extensions
-                codec_map = {
-                    "subrip": "srt",
-                    "webvtt": "vtt",
-                    "ass": "ass",
-                    "ssa": "ssa",
-                    "mov_text": "srt",
-                    "ttml": "ttml",
-                    "stpp": "ttml"
-                }
-                
-                if codec in codec_map:
-                    return codec_map[codec]
+                return get_codec_extension(codec.lower(), default="vtt")
 
         # 2. Fallback: Check binary signatures for formats like stpp in mp4/m4s or raw TTML
         with open(subtitle_path, 'rb') as f:
@@ -435,3 +425,33 @@ def convert_subtitle(subtitle_path: str, target_format: str) -> Optional[str]:
     except Exception as e:
         console.print(f"[red]    Error converting subtitle: {str(e)}")
         return None
+    
+def extract_vtt_from_wvtt_mp4(wvtt_path: str, output_vtt_path: Optional[str] = None) -> Optional[str]:
+    """
+    Extract a plain WebVTT (.vtt) file from a fragmented MP4 container that carries a WVTT (WebVTT-in-MP4) subtitle track.
+    """
+    if not os.path.exists(wvtt_path):
+        logger.error(f"extract_vtt_from_wvtt_mp4: input not found: {wvtt_path}")
+        return None
+ 
+    if output_vtt_path is None:
+        output_vtt_path = str(Path(wvtt_path).with_suffix(".vtt"))
+ 
+    try:
+        mp4box = shutil.which("MP4Box") or shutil.which("mp4box")
+        logger.info("Get mp4box path: " + (mp4box if mp4box else "not found"))
+
+        if mp4box:
+            cmd = [mp4box, "-raw", "1", wvtt_path, "-out", output_vtt_path]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0 and os.path.exists(output_vtt_path) and os.path.getsize(output_vtt_path) > 0:
+                logger.info(f"extract_vtt_from_wvtt_mp4 [MP4Box] OK → {os.path.basename(output_vtt_path)}")
+                sanitize_vtt_file(output_vtt_path)
+                return output_vtt_path
+            else:
+                logger.warning(f"extract_vtt_from_wvtt_mp4 [MP4Box] failed (rc={result.returncode}): {result.stderr.strip()[:200]}")
+    
+    except Exception as exc:
+        logger.warning(f"extract_vtt_from_wvtt_mp4 [MP4Box] exception: {exc}")
+ 
+    return None

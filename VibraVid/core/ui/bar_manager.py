@@ -8,7 +8,14 @@ from rich.console import Console
 from rich.progress import Progress, TextColumn
 
 from VibraVid.core.ui.tracker import download_tracker, context_tracker
-from VibraVid.core.ui.progress_bar import (CustomBarColumn, ColoredSegmentColumn, CompactTimeColumn, CompactTimeRemainingColumn, TransferStatsColumn)
+from VibraVid.core.ui.progress_bar import (
+    CustomBarColumn,
+    ColoredSegmentColumn,
+    CompactTimeColumn,
+    CompactTimeRemainingColumn,
+    TransferStatsColumn,
+    SHOW_ELAPSED_REMAINING
+)
 
 
 console = Console(force_terminal=True if platform.system().lower() != "windows" else None)
@@ -19,7 +26,16 @@ class DownloadBarManager:
         self.download_id = download_id
         self.tasks: Dict[str, Any] = {}
         self.subtitle_sizes: Dict[str, str] = {}
-        
+        time_columns = []
+        if SHOW_ELAPSED_REMAINING:
+            time_columns = [
+                TextColumn("[dim][[/dim]"),
+                CompactTimeColumn(),
+                TextColumn("[dim]<[/dim]"),
+                CompactTimeRemainingColumn(),
+                TextColumn("[dim]][/dim]"),
+            ]
+
         self.progress_ctx = (
             nullcontext()
             if context_tracker.is_gui
@@ -27,13 +43,12 @@ class DownloadBarManager:
                 TextColumn("[purple]{task.description}", justify="left"),
                 CustomBarColumn(bar_width=40),
                 ColoredSegmentColumn(),
-                TextColumn("[dim][[/dim]"), CompactTimeColumn(), ("[dim]<[/dim]"), CompactTimeRemainingColumn(), TextColumn("[dim]][/dim]"),
+                *time_columns,
                 TransferStatsColumn(),
                 console=console,
                 refresh_per_second=10.0,
             )
         )
-        self.progress: Optional[Progress] = None
 
     def __enter__(self):
         self.progress = self.progress_ctx.__enter__()
@@ -58,6 +73,7 @@ class DownloadBarManager:
                         segment=initial_segment,
                         speed="" if compact_metrics else "0Bps",
                         size="" if compact_metrics else "0B/0B",
+                        duration="",
                         compact_metrics=compact_metrics,
                     )
                     
@@ -89,6 +105,7 @@ class DownloadBarManager:
                     segment="0/0",
                     speed="" if compact_metrics else "0Bps",
                     size="" if compact_metrics else "0B/0B",
+                    duration="",
                     compact_metrics=compact_metrics,
                 )
                 if self.progress else "gui"
@@ -125,6 +142,8 @@ class DownloadBarManager:
             self.progress.update(tid, size=parsed["size"])
         if "segments" in parsed:
             self.progress.update(tid, segment=parsed["segments"])
+        if "duration" in parsed and not parsed.get("compact_metrics"):
+            self.progress.update(tid, duration=parsed["duration"])
 
         # Subtitle completion
         if "final_size" in parsed:

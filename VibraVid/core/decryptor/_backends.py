@@ -63,9 +63,8 @@ def decrypt_bento4_nonlive(mp4decrypt_path: str, encrypted_path: str, normalized
             return False
         return True
 
-    stderr_msg = result[1] if isinstance(result, tuple) else "Unknown error"
-    logger.error(f"Bento4 failed: {stderr_msg}")
-    console.print(f"[red]Bento4 failed: {stderr_msg}")
+    logger.error(f"Bento4 failed: {result}")
+    console.print(f"[red]Bento4 failed: {result}")
     return False
 
 

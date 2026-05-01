@@ -4,17 +4,21 @@ import math
 import re
 import logging
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
+
+from rich.console import Console
 
 from VibraVid.core.manifest.stream import DRMInfo, Segment, Stream
 from VibraVid.utils.http_client import create_client, get_headers
 from VibraVid.utils import config_manager
 from VibraVid.core.utils.language import resolve_locale
-from VibraVid.core.utils.codec import (DV_CODEC_PREFIXES, detect_stream_type)
+from VibraVid.core.utils.codec import DV_CODEC_PREFIXES, detect_stream_type, get_codec_extension, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS
 
 
+console = Console()
 logger = logging.getLogger(__name__)
 _NS = {
     "mpd": "urn:mpeg:dash:schema:mpd:2011",
@@ -31,9 +35,7 @@ _TC_MAP = {
     "18": "HLG",  # ARIB STD-B67
 }
 _CP_HDR_HINT = {"9"}  # BT.2020 ColourPrimaries
-_FILE_EXT_WHITELIST = {
-    ".mpd", ".m4s", ".mp4", ".cmfv", ".cmfa", ".m4a", ".webm", ".mp3", ".aac", ".vtt", ".ttml", ".srt"
-}
+_FILE_EXT_WHITELIST = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | SUBTITLE_EXTENSIONS | {".mpd", ".m4s", ".cmfv", ".cmfa"}
 _AD_PATH_RE = re.compile(r"(?:^|/)(?:ad|ads|advert|impression|preroll|midroll|postroll)(?:/|$)", re.IGNORECASE)
 _SEGMENT_TOKEN_RE = re.compile(r"\$(RepresentationID|Number|Time|Bandwidth)(?:%0?(\d+)d)?\$")
 
@@ -123,7 +125,7 @@ def _is_ad_period(period_url: str, period_element) -> bool:
     asset_text = (asset_identifier.text or "").strip().lower() if asset_identifier is not None else ""
     asset_is_ad = any(token in asset_text for token in ("ad", "advert", "impression", "preroll", "midroll", "postroll"))
     xlink_is_ad = xlink_actuate == "onload"
-    logger.info("_is_ad_period | url=%s | url_ad=%s | xlink_onload=%s | asset_ad=%s | has_drm=%s", period_url, url_is_ad, xlink_is_ad, asset_is_ad, has_drm,)
+    logger.info(f"_is_ad_period | url={period_url} | url_ad={url_is_ad} | xlink_onload={xlink_is_ad} | asset_ad={asset_is_ad} | has_drm={has_drm}")
     
     if (url_is_ad or xlink_is_ad or asset_is_ad) and not has_drm:
         return True
@@ -159,13 +161,29 @@ class DashParser:
         self.raw_content: Optional[str] = content
         self._root: Optional[ET.Element] = None
         self._base_url = self._calc_base_url(mpd_url)
+        self._mpd_query: str = urlparse(mpd_url).query if mpd_url else ""
         self._uses_range_split: bool = False
+        self._manifest_is_live: bool = False
 
     @staticmethod
     def _calc_base_url(url: str) -> str:
         p = urlparse(url)
         path = p.path.rsplit("/", 1)[0]
         return f"{p.scheme}://{p.netloc}{path}/"
+    
+    @staticmethod
+    def _inherit_query(segment_url: str, source_query: str) -> str:
+        """
+        Append *source_query* to *segment_url* if the segment has no query string of its own.  
+        This propagates auth tokens (e.g. dazn-token) from the MPD URL to every generated segment URL.
+        """
+        if not source_query:
+            return segment_url
+        p = urlparse(segment_url)
+        if p.query:
+            # Segment already has its own query — do not touch it
+            return segment_url
+        return urlunparse(p._replace(query=source_query))
 
     def fetch_manifest(self) -> bool:
         if self._injected:
@@ -190,8 +208,24 @@ class DashParser:
             self._resolve_base_url()
             return True
         except Exception as exc:
+            console.print(f"[red]Error fetching/parsing MPD manifest: {exc}[/red]")
             logger.error(f"DashParser: fetch/parse failed: {exc}")
             return False
+        
+    @property
+    def live_meta(self) -> Dict:
+        """
+        Return live-scheduling metadata for dynamic MPDs.
+
+        Consumed by ``download_live.py`` to drive the poll loop without touching the private ``_root`` attribute directly.
+        """
+        if self._root is None:
+            return {"min_update_period": 4.0, "is_ended": True, "availability_start_time": ""}
+        
+        mpd_type = (self._root.get("type") or "dynamic").strip().lower()
+        raw_period = self._root.get("minimumUpdatePeriod", "")
+        upd = self._parse_iso_duration(raw_period)
+        return {"min_update_period": upd if upd > 0 else 4.0, "is_ended": mpd_type == "static", "availability_start_time": self._root.get("availabilityStartTime", "")}
 
     def save_raw(self, directory: Path) -> Path:
         path = Path(directory) / "raw.mpd"
@@ -202,6 +236,11 @@ class DashParser:
     def parse_streams(self) -> List[Stream]:
         if self._root is None:
             return []
+
+        # Determine if MPD is dynamic (live)
+        mpd_type = (self._root.get("type") or "").strip().lower()
+        manifest_is_live = (mpd_type == "dynamic")
+        self._manifest_is_live = manifest_is_live
 
         streams: List[Stream] = []
         dur_str = self._root.get("mediaPresentationDuration", "")
@@ -268,10 +307,14 @@ class DashParser:
                     streams.append(s)
                     logger.info(f"DASH add | {s}")
 
-        # After parsing all streams, log if range-split was detected anywhere
+        if manifest_is_live:
+            for s in streams:
+                s.is_live = True
+
+        logger.info(f"DASH manifest type: {'LIVE' if manifest_is_live else 'VOD'}")
         if self._uses_range_split:
             logger.info("DASH manifest uses range-split (SegmentBase with byte ranges). Live decryption is disabled for all streams in this manifest.")
-            
+
         return streams
 
     def _parse_representation(self, rep, adapt, stype, adapt_drm, global_dur, period_start, base_url):
@@ -422,15 +465,53 @@ class DashParser:
         s.language = raw_lang
         s.resolved_language = resolve_locale(raw_lang)
         s.codecs = rep.get("codecs") or adapt.get("codecs", "")
+ 
+        # ── Detect subtitle container format from mimeType ────────────────────
+        # Priority: Representation mimeType > AdaptationSet mimeType > codecs
+        mime_raw = (rep.get("mimeType") or adapt.get("mimeType") or adapt.get("contentType") or "").lower().strip()
+ 
+        # Map known MIME types / codec strings to a clean format token
+        _MIME_TO_FMT = {
+            "text/vtt": "vtt",
+            "text/webvtt": "vtt",
+            "application/ttml+xml": "ttml",
+            "text/ttml": "ttml",
+            "application/mp4": None,
+            "video/mp4": None,
+        }
 
+        fmt = _MIME_TO_FMT.get(mime_raw)
+        if fmt is None:
+            codec_lc = (s.codecs or "").lower().strip()
+            fmt = get_codec_extension(codec_lc, default="vtt")
+ 
+        # Pure text/vtt streams that carry ".vtt" segments but no codec string
+        if not fmt and "vtt" in mime_raw:
+            fmt = "vtt"
+        if not fmt and "ttml" in mime_raw:
+            fmt = "ttml"
+ 
+        # Default for unknown DASH text streams
+        if not fmt:
+            fmt = "vtt"
+ 
+        # wvtt is a special case: WebVTT packaged inside fMP4
+        if fmt == "wvtt" or (s.codecs or "").lower().strip() == "wvtt":
+            s.is_wvtt_mp4 = True
+            fmt = "wvtt"
+            logger.debug(f"DashParser: subtitle id={s.id!r} lang={raw_lang!r} flagged as wvtt-mp4")
+ 
+        s.format = fmt
+ 
+        # ── Roles / flags ─────────────────────────────────────────────────────
         role_values = {el.get("value", "").lower() for el in adapt.findall(".//mpd:Role", _NS)}
         if "forced-subtitle" in role_values or "forced_subtitle" in role_values:
             s.forced = True
         if "caption" in role_values or "captions" in role_values:
             s.is_cc = True
-
+ 
         s.is_sdh = self._is_accessibility_sdh(adapt)
-
+ 
         if s.forced and not s.name:
             s.name = f"{s.language} [Forced]"
         elif s.is_cc and not s.name:
@@ -514,7 +595,7 @@ class DashParser:
             for cp in element.findall(".//mpd:ContentProtection", _NS):
                 scheme = (cp.get("schemeIdUri") or "").lower()
                 dtype = _drm_hint_from_scheme(scheme)
-                logger.info(f"DashParser: inferring DRM type from scheme | scheme={scheme} | inferred_type={dtype}")
+                logger.debug(f"DashParser: inferring DRM type from scheme | scheme={scheme} | inferred_type={dtype}")
 
                 if dtype:
                     if dtype not in info._drm_types:
@@ -586,7 +667,6 @@ class DashParser:
         expanded = _SEGMENT_TOKEN_RE.sub(_repl, escaped)
         return expanded.replace("__DASH_DOLLAR__", "$")
 
-    
     def _apply_segment_template(self, tmpl, rep_id, stream, period_start, base_url):
         if "/ad/" in base_url.lower():
             logger.info(f"DashParser: segment skipped (ad path) | url={base_url}")
@@ -606,7 +686,9 @@ class DashParser:
                 number=start_num,
                 time_value=start_time,
             )
-            stream.add_segment(Segment(urljoin(base_url, init_url), 0, "init"))
+            stream.add_segment(Segment(
+                self._inherit_query(urljoin(base_url, init_url), self._mpd_query), 0, "init"
+            ))
 
         timeline = tmpl.find(".//mpd:SegmentTimeline", _NS)
         if timeline is not None:
@@ -626,44 +708,85 @@ class DashParser:
                         number=seg_num,
                         time_value=current_time,
                     )
-                    stream.add_segment(Segment(urljoin(base_url, seg_url), seg_num, "media"))
+                    stream.add_segment(Segment(
+                        self._inherit_query(urljoin(base_url, seg_url), self._mpd_query), seg_num, "media"
+                    ))
                     current_time += d
                     seg_num += 1
         elif "$Number" in media_tpl:
             seg_duration = int(tmpl.get("duration", 0))
-            if seg_duration <= 0 or stream.duration <= 0:
+            if seg_duration <= 0:
                 logger.error("DashParser: SegmentTemplate $Number$ without timeline: missing duration — cannot generate segments")
                 return
-            total_segments = math.ceil(stream.duration * timescale / seg_duration)
-            for i in range(start_num, start_num + total_segments):
+
+            if stream.duration <= 0 and self._manifest_is_live:
+                live_window = self._estimate_live_number_window(seg_duration, timescale, start_num)
+                if not live_window:
+                    logger.error("DashParser: live $Number$ template could not be windowed")
+                    return
+                first_num, last_num = live_window
+                number_iter = range(first_num, last_num + 1)
+            else:
+                total_segments = math.ceil(stream.duration * timescale / seg_duration)
+                number_iter = range(start_num, start_num + total_segments)
+
+            for i in number_iter:
                 seg_url = self._expand_segment_template_tokens(media_tpl, rep_id, bandwidth, number=i)
-                stream.add_segment(Segment(urljoin(base_url, seg_url), i, "media"))
+                stream.add_segment(Segment(
+                    self._inherit_query(urljoin(base_url, seg_url), self._mpd_query), i, "media"
+                ))
         elif "$Time" in media_tpl:
             logger.error("DashParser: SegmentTemplate $Time$ without SegmentTimeline — skipping")
+
+    def _estimate_live_number_window(self, seg_duration: int, timescale: int, start_num: int) -> Optional[tuple[int, int]]:
+        """Estimate a rolling window of $Number$ segments for dynamic MPDs without SegmentTimeline."""
+        if self._root is None:
+            return None
+
+        ast = self._root.get("availabilityStartTime", "")
+        if not ast:
+            return None
+
+        try:
+            ast_dt = datetime.fromisoformat(ast.replace("Z", "+00:00"))
+            if ast_dt.tzinfo is None:
+                ast_dt = ast_dt.replace(tzinfo=timezone.utc)
+
+            now_dt = datetime.now(timezone.utc)
+            elapsed = max(0.0, (now_dt - ast_dt).total_seconds())
+            segment_seconds = float(seg_duration) / float(timescale or 1)
+            if segment_seconds <= 0:
+                return None
+
+            current_number = int(elapsed // segment_seconds)
+            buffer_depth = self._parse_iso_duration(self._root.get("timeShiftBufferDepth", ""))
+            window_count = max(3, int(math.ceil(buffer_depth / segment_seconds)) if buffer_depth > 0 else 3)
+            first_num = max(start_num, current_number - window_count + 1)
+            return first_num, max(first_num, current_number)
+        
+        except Exception as exc:
+            logger.error(f"DashParser: live window estimation failed: {exc}")
+            return None
     
     def _apply_segment_list(self, seg_list, stream, base_url):
         init_el = seg_list.find("mpd:Initialization", _NS)
         if init_el is not None:
-            # Try sourceURL first (URL-based init), then range (byte-range init)
             src = init_el.get("sourceURL", "")
             if src:
-                stream.add_segment(Segment(urljoin(base_url, src), 0, "init"))
+                stream.add_segment(Segment(self._inherit_query(urljoin(base_url, src), self._mpd_query), 0, "init"))
             else:
-                # Byte-range format: range attribute points to bytes in the base file
                 init_range = init_el.get("range", "")
                 if init_range:
-                    stream.add_segment(Segment(base_url.rstrip("/"), 0, "init", byte_range=init_range))
+                    stream.add_segment(Segment(self._inherit_query(base_url.rstrip("/"), self._mpd_query), 0, "init", byte_range=init_range))
         
         for idx, seg_el in enumerate(seg_list.findall("mpd:SegmentURL", _NS), start=1):
-            # Try media first (URL-based segment), then mediaRange (byte-range segment)
             media_url = seg_el.get("media", "")
             if media_url:
-                stream.add_segment(Segment(urljoin(base_url, media_url), idx, "media"))
+                stream.add_segment(Segment(self._inherit_query(urljoin(base_url, media_url), self._mpd_query), idx, "media"))
             else:
-                # Byte-range format: mediaRange points to bytes in the base file
                 media_range = seg_el.get("mediaRange", "")
                 if media_range:
-                    stream.add_segment(Segment(base_url.rstrip("/"), idx, "media", byte_range=media_range))
+                    stream.add_segment(Segment(self._inherit_query(base_url.rstrip("/"), self._mpd_query), idx, "media", byte_range=media_range))
 
     @staticmethod
     def _parse_iso_duration(s: str) -> float:

@@ -43,7 +43,7 @@ def build_dash_ranged_segments(media_url: str, headers: Dict, chunk_size: int, r
             return []
 
         ranges = split_http_ranges(content_len, chunk_size)
-        logger.debug("DASH range-split | url=%s | size=%s | chunk=%s | parts=%s", media_url, content_len, chunk_size, len(ranges))
+        logger.debug(f"DASH range-split | url={media_url} | size={content_len} | chunk={chunk_size} | parts={len(ranges)}")
         return [
             {
                 "url":     media_url,
@@ -54,5 +54,5 @@ def build_dash_ranged_segments(media_url: str, headers: Dict, chunk_size: int, r
             for start, end in ranges
         ]
     except Exception as exc:
-        logger.debug("DASH range-split skipped for %s: %s", media_url, exc)
+        logger.debug(f"DASH range-split skipped for {media_url}: {exc}")
         return []

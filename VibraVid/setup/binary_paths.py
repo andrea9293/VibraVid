@@ -31,7 +31,7 @@ class BinaryPaths:
         system = platform.system().lower()
         supported_systems = ['windows', 'darwin', 'linux']
         if system not in supported_systems:
-            logger.warning("Unsupported OS detected (%s), falling back to linux semantics", system)
+            logger.warning(f"Unsupported OS detected ({system}), falling back to linux semantics")
             return 'linux'
         
         return system
@@ -74,14 +74,14 @@ class BinaryPaths:
 
             try:
                 url = f"{self.github_repo}/binary_paths.json"
-                logger.info("Loading binary paths JSON from %s", url)
+                logger.info(f"Loading binary paths JSON from {url}")
                 response = create_client(headers=get_headers()).get(url)
                 response.raise_for_status()
                 self._paths_json_cache = response.json()
-                logger.info("Loaded binary paths JSON (%d entries)", len(self._paths_json_cache))
+                logger.info(f"Loaded binary paths JSON ({len(self._paths_json_cache)} entries)")
                 return self._paths_json_cache
             except Exception as e:
-                logger.error("Failed to load binary paths JSON: %s", e, exc_info=True)
+                logger.error(f"Failed to load binary paths JSON: {e}", exc_info=True)
                 return {}
 
     def get_binary_path(self, tool: str, binary_name: str) -> Optional[str]:
@@ -91,7 +91,7 @@ class BinaryPaths:
 
         local_path = os.path.join(self.get_binary_directory(), binary_name)
         if os.path.isfile(local_path):
-            logger.debug("Found local binary %s at %s", binary_name, local_path)
+            logger.debug(f"Found local binary {binary_name} at {local_path}")
             self._resolved[binary_name] = local_path
             return local_path
 
@@ -122,22 +122,22 @@ class BinaryPaths:
 
             # The file may also be present on disk even if not in the cache (e.g. left over from a previous application session).
             if os.path.isfile(local_path) and os.path.getsize(local_path) > 0:
-                logger.info("Binary %s already on disk, skipping download", binary_name)
+                logger.info(f"Binary {binary_name} already on disk, skipping download")
                 self._resolved[binary_name] = local_path
                 return local_path
 
             paths_json = self._load_paths_json()
             key = f"{self.system}_{self.arch}_{tool}"
-            logger.info("Looking up binary paths for key %s", key)
+            logger.info(f"Looking up binary paths for key {key}")
             console.log(f"[cyan]Downloading [red]{binary_name} [cyan]for [yellow]{tool} [cyan]on [red]{self.system} {self.arch}")
 
             if key not in paths_json:
-                logger.error("No binary paths found for key %s in binary paths JSON", key)
+                logger.error(f"No binary paths found for key {key} in binary paths JSON")
                 
                 # Fallback: the file may have been installed manually or by a previous session
                 # even though the remote manifest is unavailable (e.g. HTTP 404 / network error).
                 if os.path.isfile(local_path) and os.path.getsize(local_path) > 0:
-                    logger.info("Manifest unavailable but binary %s found on disk, using it", binary_name)
+                    logger.info(f"Manifest unavailable but binary {binary_name} found on disk, using it")
                     self._resolved[binary_name] = local_path
                     return local_path
                 return None
@@ -147,7 +147,7 @@ class BinaryPaths:
                     continue
 
                 url = f"{self.github_repo}/binaries/{rel_path}"
-                logger.info("Downloading %s from %s to %s", binary_name, url, local_path)
+                logger.info(f"Downloading {binary_name} from {url} to {local_path}")
                 console.log(f"[cyan]Downloading from [red]{url} [cyan]to [yellow]{local_path}")
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
@@ -166,12 +166,12 @@ class BinaryPaths:
                     # Atomic rename: the binary becomes visible to other processes only after the write is fully complete.
                     os.replace(tmp_path, local_path)
 
-                    logger.info("Downloaded %s to %s", binary_name, local_path)
+                    logger.info(f"Downloaded {binary_name} to {local_path}")
                     self._resolved[binary_name] = local_path
                     return local_path
 
                 except Exception as e:
-                    logger.error("Failed to download %s from %s: %s", binary_name, url, e, exc_info=True)
+                    logger.error(f"Failed to download {binary_name} from {url}: {e}", exc_info=True)
                     try:
                         if os.path.exists(tmp_path):
                             os.remove(tmp_path)

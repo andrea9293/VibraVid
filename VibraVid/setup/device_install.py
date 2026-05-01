@@ -23,13 +23,13 @@ class DeviceSearcher:
             for file in os.listdir(self.base_dir):
                 if file.lower().endswith(ext):
                     path = os.path.join(self.base_dir, file)
-                    logger.debug("Found %s file in binary directory: %s", ext, path)
+                    logger.debug(f"Found {ext} file in binary directory: {path}")
                     return path
                 
             return None
         
         except Exception as e:
-            logger.exception("Error checking existing %s files", ext)
+            logger.exception(f"Error checking existing {ext} files")
             console.print(f"[red]Error checking existing {ext} files: {e}")
             return None
 
@@ -44,18 +44,18 @@ class DeviceSearcher:
                     if filename:
                         if file == filename:
                             path = os.path.join(root, file)
-                            logger.info("Found %s at %s", filename, path)
+                            logger.info(f"Found {filename} at {path}")
                             return path
                         
                     elif ext:
                         if file.lower().endswith(ext):
                             path = os.path.join(root, file)
-                            logger.info("Found %s at %s", ext, path)
+                            logger.info(f"Found {ext} at {path}")
                             return path
                         
             return None
         except Exception as e:
-            logger.exception("Error during recursive search for filename %s", filename)
+            logger.exception(f"Error during recursive search for filename {filename}")
             console.print(f"[red]Error during recursive search for filename {filename}: {e}")
             return None
 
@@ -68,10 +68,10 @@ class DeviceSearcher:
             try:
                 target_path = os.path.join(self.base_dir, filename)
                 if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
-                    logger.info("Found %s in binary directory: %s", filename, target_path)
+                    logger.info(f"Found {filename} in binary directory: {target_path}")
                     return target_path
             except Exception as e:
-                logger.exception("Error checking for existing file %s", filename)
+                logger.exception(f"Error checking for existing file {filename}")
                 console.print(f"[red]Error checking for existing file {filename}: {e}")
                 return None
 

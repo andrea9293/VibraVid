@@ -126,6 +126,12 @@ class HLSParser:
                         stream.playlist_url = urljoin(self._base_url, nxt)
                         if not stream.id:
                             stream.id = _make_video_id(stream)
+                            try:
+                                variant_drm, variant_content = self.parse_variant(stream.playlist_url)
+                                stream.is_live = (variant_content is not None) and ("#EXT-X-ENDLIST" not in variant_content)
+                            except Exception:
+                                stream.is_live = False
+
                         streams.append(stream)
                         logger.info(f"HLS add | {stream}")
                 i += 2
@@ -191,9 +197,18 @@ class HLSParser:
                 # CENC, Widevine, or unencrypted: Can support live decryption
                 stream.supports_live_decryption = True
 
+        manifest_live = any(s.is_live for s in streams)
+        logger.info(f"HLS manifest type: {'LIVE' if manifest_live else 'VOD'}")
+
+        if manifest_live:
+            for stream in streams:
+                if not stream.is_live and stream.playlist_url and stream.type != "video":
+                    stream.is_live = True
+                    logger.info(f"HLS stream marked as live (propagated): {stream}")
+
         return streams
 
-    def parse_variant(self, variant_url: str) -> DRMInfo:
+    def parse_variant(self, variant_url: str) -> tuple[DRMInfo, Optional[str]]:
         """Fetch and parse a variant playlist to find additional DRM info."""
         try:
             hdrs = dict(self.headers)
@@ -202,10 +217,10 @@ class HLSParser:
                 r = c.get(variant_url)
                 r.raise_for_status()
                 variant_content = r.text
-                return self._parse_drm_tags(variant_content)
+                return self._parse_drm_tags(variant_content), variant_content
         except Exception as exc:
             logger.error(f"HLSParser: parse_variant failed for {variant_url}: {exc}")
-            return DRMInfo()
+            return DRMInfo(), None
 
     def _parse_stream_inf(self, line: str) -> Stream:
         s = Stream(type="video", format="hls")

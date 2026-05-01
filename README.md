@@ -22,7 +22,6 @@ _⚡ **Quick Start:** `pip install VibraVid && VibraVid`_
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Login](.github/docs/en/login.md)
-- [Service](.github/docs/en/add_service.md)
 - [Downloaders](#downloaders)
 - [Configuration](#configuration)
 - [Usage Examples](#usage-examples)

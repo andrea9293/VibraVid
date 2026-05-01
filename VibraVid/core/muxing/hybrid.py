@@ -16,17 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 def _run_command(cmd: List[str], description: str) -> bool:
-    logger.info("%s: %s", description, " ".join(str(part) for part in cmd))
+    logger.info(f'{description}: {" ".join(str(part) for part in cmd)}')
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
         if stderr:
-            logger.error("%s failed: %s", description, stderr)
+            logger.error(f"{description} failed: {stderr}")
         elif stdout:
-            logger.error("%s failed: %s", description, stdout)
+            logger.error(f"{description} failed: {stdout}")
         else:
-            logger.error("%s failed with exit code %s", description, result.returncode)
+            logger.error(f"{description} failed with exit code {result.returncode}")
         return False
     return True
 
@@ -67,13 +67,13 @@ def probe_media_file(file_path: str) -> Dict[str, Any]:
         if isinstance(simple_probe, dict):
             probe.update(simple_probe)
     except Exception as exc:
-        logger.debug("Hybrid metadata probe failed for %s: %s", file_obj, exc)
+        logger.debug(f"Hybrid metadata probe failed for {file_obj}: {exc}")
 
     try:
         ffprobe_path = get_ffprobe_path()
         stream_info = asyncio.run(Mediainfo.from_file_async(ffprobe_path, str(file_obj)))
     except Exception as exc:
-        logger.debug("Hybrid stream probe failed for %s: %s", file_obj, exc)
+        logger.debug(f"Hybrid stream probe failed for {file_obj}: {exc}")
         return probe
 
     video_stream = next((item for item in stream_info if item.type.lower() == "video"), None)
@@ -151,7 +151,7 @@ def build_hybrid_output(
 
     base_path = Path(base_path_str)
     if not base_path.exists():
-        logger.warning("Hybrid mux skipped: base video not found at %s", base_path)
+        logger.warning(f"Hybrid mux skipped: base video not found at {base_path}")
         return None
 
     selected_other = _select_hybrid_video(video_track, other_videos)
@@ -165,7 +165,7 @@ def build_hybrid_output(
 
     dv_path = Path(dv_path_str)
     if not dv_path.exists():
-        logger.warning("Hybrid mux skipped: DV video not found at %s", dv_path)
+        logger.warning(f"Hybrid mux skipped: DV video not found at {dv_path}")
         return None
 
     dovi_tool = get_dovi_tool_path()
@@ -258,8 +258,8 @@ def build_hybrid_output(
         return None
 
     if not output_file.exists() or output_file.stat().st_size <= 0:
-        logger.error("Hybrid mux produced no output: %s", output_file)
+        logger.error(f"Hybrid mux produced no output: {output_file}")
         return None
 
-    logger.info("Hybrid output created: %s", output_file)
+    logger.info(f"Hybrid output created: {output_file}")
     return str(output_file)

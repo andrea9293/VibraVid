@@ -60,7 +60,7 @@ SUBTITLE_CODEC_MAP: dict[str, str] = {
     "stpp.ttml.im1t": "TTML",
     "stpp":    "TTML",
     "ttml":    "TTML",
-    "wvtt":    "VTT",
+    "wvtt":    "WVTT",
     "vtt":     "VTT",
     "webvtt":  "VTT",
     "srt":     "SRT",
@@ -142,16 +142,39 @@ VIDEO_CODEC_PREFIXES: tuple[str, ...] = (
 DV_CODEC_PREFIXES: tuple[str, ...] = ("dvh1", "dvhe", "dvav", "dav1")
 
 VIDEO_EXTENSIONS: frozenset[str] = frozenset({
-    ".mp4", ".mkv", ".m4v", ".ts", ".mov", ".webm", ".m2ts", ".avi"
+    ".mp4",
+    ".mkv",
+    ".m4v",
+    ".ts",
+    ".mov",
+    ".webm",
+    ".m2ts",
+    ".avi"
 })
 
 AUDIO_EXTENSIONS: frozenset[str] = frozenset({
-    ".m4a", ".aac", ".mp3", ".ts", ".mp4", ".wav", ".webm", ".opus", ".flac"
+    ".m4a",
+    ".aac",
+    ".mp3",
+    ".ts",
+    ".mp4",
+    ".wav",
+    ".webm",
+    ".opus",
+    ".flac"
 })
 
 SUBTITLE_EXTENSIONS: frozenset[str] = frozenset({
-    ".srt", ".vtt", ".ass", ".sub", ".ssa",
-    ".m4s", ".ttml", ".xml", ".dfxp",
+    ".srt",
+    ".vtt",
+    ".ass",
+    ".sub",
+    ".ssa",
+    ".m4s",
+    ".ttml",
+    ".ttml2",
+    ".xml",
+    ".dfxp"
 })
 
 
@@ -359,53 +382,6 @@ def get_channel_label(channels: str) -> str:
         return CHANNEL_MAP.get(str(n), ch)
     except (ValueError, TypeError):
         return ch
-
-
-_LANG_NAME_MAP: dict[str, str] = {
-    "it": "Italian",    "ita": "Italian",
-    "en": "English",    "eng": "English",
-    "ja": "Japanese",   "jpn": "Japanese",
-    "de": "German",     "ger": "German",   "deu": "German",
-    "fr": "French",     "fre": "French",   "fra": "French",
-    "es": "Spanish",    "spa": "Spanish",
-    "pt": "Portuguese", "por": "Portuguese",
-    "ru": "Russian",    "rus": "Russian",
-    "ar": "Arabic",     "ara": "Arabic",
-    "zh": "Chinese",    "chi": "Chinese",  "zho": "Chinese",
-    "ko": "Korean",     "kor": "Korean",
-    "hi": "Hindi",      "hin": "Hindi",
-    "tr": "Turkish",    "tur": "Turkish",
-    "pl": "Polish",     "pol": "Polish",
-    "nl": "Dutch",      "dut": "Dutch",    "nld": "Dutch",
-    "sv": "Swedish",    "swe": "Swedish",
-    "fi": "Finnish",    "fin": "Finnish",
-    "nb": "Norwegian",  "nor": "Norwegian",
-    "da": "Danish",     "dan": "Danish",
-    "ro": "Romanian",   "rum": "Romanian", "ron": "Romanian",
-    "cs": "Czech",      "cze": "Czech",    "ces": "Czech",
-    "hu": "Hungarian",  "hun": "Hungarian",
-    "el": "Greek",      "gre": "Greek",    "ell": "Greek",
-    "he": "Hebrew",     "heb": "Hebrew",
-    "uk": "Ukrainian",  "ukr": "Ukrainian",
-    "th": "Thai",       "tha": "Thai",
-    "vi": "Vietnamese", "vie": "Vietnamese",
-    "id": "Indonesian", "ind": "Indonesian",
-    "ms": "Malay",      "may": "Malay",    "msa": "Malay",
-    "sk": "Slovak",     "slk": "Slovak",   "slo": "Slovak",
-    "hr": "Croatian",   "hrv": "Croatian",
-    "sr": "Serbian",    "srp": "Serbian",
-    "bg": "Bulgarian",  "bul": "Bulgarian",
-    "sl": "Slovenian",  "slv": "Slovenian",
-    "sq": "Albanian",
-    "ca": "Catalan",    "cat": "Catalan",
-}
-
-
-def get_language_name(lang: str) -> str:
-    """Return the full English language name for a code, or the code itself."""
-    if not lang or lang.lower() in ("und", "n/a", ""):
-        return ""
-    return _LANG_NAME_MAP.get(lang.lower(), lang)
 
 
 def codec_matches_stream(stream, filter_str: str) -> bool:

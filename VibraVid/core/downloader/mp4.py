@@ -22,6 +22,7 @@ msg = Prompt()
 console = Console()
 logger = logging.getLogger(__name__)
 SKIP_DOWNLOAD = config_manager.config.get_bool('DOWNLOAD', 'skip_download')
+DELAY_SS = config_manager.config.get_int('DOWNLOAD', 'delay_after_download')
 
 
 class InterruptHandler:
@@ -314,7 +315,9 @@ def MP4_Downloader(url: str, path: str, referer: str = None, headers_: dict = No
             download_tracker.complete_download(download_id, success=True, path=abs_path)
 
         execute_hooks('post_run')
-        time.sleep(config_manager.config.get_int("DOWNLOAD", "delay_after_download"))
+        if DELAY_SS > 0:
+            console.print(f"\n[green]Sleeping {DELAY_SS} seconds before finishing...")
+            time.sleep(DELAY_SS)
         return path, interrupt_handler.kill_download
 
     else:

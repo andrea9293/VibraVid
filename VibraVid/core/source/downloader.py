@@ -29,6 +29,7 @@ from ._hls_utils import hls_base_url, parse_hls_variant_playlist
 from ._dash_utils import build_dash_ranged_segments
 from ..decryptor._segment_crypto import decrypt_aes128
 from ._stream_helpers import (detect_seg_ext, safe_name, describe_key_for_log, join_interruptible, SilentDownloadBarManager)
+from .downloader_live import LiveDownloadMixin
 
 
 logger = logging.getLogger("manual")
@@ -38,7 +39,7 @@ RETRY_COUNT = config_manager.config.get_int("REQUESTS",  "max_retry")
 REQUEST_TIMEOUT = config_manager.config.get_int("REQUESTS",  "timeout")
 
 
-class MediaDownloader(BaseMediaDownloader):
+class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
     def __init__(self, url: str, output_dir: str, filename: str, headers: Optional[Dict] = None, key: Optional[Any] = None, cookies: Optional[Dict] = None, download_id: Optional[str] = None, site_name: Optional[str] = None, max_segments: Optional[int] = None) -> None:
         super().__init__(
             url=url,
@@ -68,7 +69,16 @@ class MediaDownloader(BaseMediaDownloader):
         self._promote_hls_subtitles_to_external()
         self._prepare_labels()
 
-        selected_media = [s for s in self.streams if s.selected and not s.is_external and s.type in ("video", "audio")]
+        # Include all selected non-external streams:
+        # - video and audio always
+        # - subtitle: WVTT-MP4 (fMP4 segments) AND standard DASH subtitles (VTT/TTML segments)
+        # HLS subtitles are promoted to external by _promote_hls_subtitles_to_external()
+        # so subtitle streams left here are always DASH segment-based tracks.
+        selected_media = [
+            s for s in self.streams
+            if s.selected and not s.is_external
+            and s.type in ("video", "audio", "subtitle")
+        ]
         all_support_live = (all(s.supports_live_decryption for s in selected_media) if selected_media else False)
 
         if all_support_live and selected_media:
@@ -150,9 +160,10 @@ class MediaDownloader(BaseMediaDownloader):
                     join_interruptible([ext_thread], self._stop_event, hard_timeout=300.0)
 
                 else:
-                    logger.info("Sequential download: video → audio → external tracks.")
-                    video_streams = [s for s in selected_media if s.type == "video"]
-                    audio_streams = [s for s in selected_media if s.type == "audio"]
+                    logger.info("Sequential download: video → audio → subtitles → external tracks.")
+                    video_streams  = [s for s in selected_media if s.type == "video"]
+                    audio_streams  = [s for s in selected_media if s.type == "audio"]
+                    sub_streams    = [s for s in selected_media if s.type == "subtitle"]
 
                     for stream in video_streams:
                         if self._stop_check():
@@ -165,8 +176,16 @@ class MediaDownloader(BaseMediaDownloader):
                     for stream in audio_streams:
                         if self._stop_check():
                             break
-                        
                         logger.info(f"Sequential: downloading audio ({stream.language or 'und'})")
+                        t = threading.Thread(target=_run_stream, args=(stream,), daemon=True)
+                        t.start()
+                        join_interruptible([t], self._stop_event)
+
+                    for stream in sub_streams:
+                        if self._stop_check():
+                            break
+
+                        logger.info(f"Sequential: downloading subtitle ({stream.language or 'und'})")
                         t = threading.Thread(target=_run_stream, args=(stream,), daemon=True)
                         t.start()
                         join_interruptible([t], self._stop_event)
@@ -225,6 +244,9 @@ class MediaDownloader(BaseMediaDownloader):
         """Generate a unique task key for a stream, used for progress tracking."""
         if stream.type == "video":
             return self._video_task_key
+        if stream.type == "subtitle":
+            lang = (stream.resolved_language or stream.language or "und").lower()
+            return f"sub_{lang.split('-')[0]}"
         
         lang = (stream.resolved_language or stream.language or "und").lower()
         return f"aud_{lang.split('-')[0]}"
@@ -234,6 +256,8 @@ class MediaDownloader(BaseMediaDownloader):
         # NOTE: can exceed 260-char path limit on Windows if filename is long.
         if stream.type == "video":
             name = f"v_{safe_name(stream.resolution or 'unknown')}"
+        elif stream.type == "subtitle":
+            name = f"s_{safe_name((stream.language or 'und').lower())}"
         else:
             name = f"a_{safe_name((stream.language or 'und').lower())}"
         d = self._tmp_dir / name
@@ -241,15 +265,38 @@ class MediaDownloader(BaseMediaDownloader):
         return d
 
     def _download_stream(self, stream, bar_manager: DownloadBarManager) -> None:
-        """Download a single stream (HLS or DASH), with decryption if needed."""
+        """Dispatch a stream to the appropriate downloader."""
         effective_live = self._session_live_decrypt
+
         if self.manifest_type == "HLS":
-            self._download_hls_stream(stream, bar_manager, effective_live)
-        else:
-            self._download_dash_stream(stream, bar_manager, effective_live)
+            if stream.is_live:
+                playlist_url = stream.playlist_url
+                all_headers = self._build_headers()
+                first_content: Optional[str] = None
+                base_url: Optional[str] = None
+
+                try:
+                    with create_client(headers=all_headers, timeout=REQUEST_TIMEOUT, follow_redirects=True) as c:
+                        resp = c.get(playlist_url)
+                        resp.raise_for_status()
+                        first_content = resp.text
+                    base_url = hls_base_url(playlist_url)
+                except Exception as exc:
+                    logger.error(f"Failed to fetch HLS playlist for live detection: {exc}")
+                    return
+
+                self._download_hls_live_stream(stream, bar_manager, live_decryption=effective_live, first_content=first_content, base_url=base_url)
+            else:
+                self._download_hls_stream(stream, bar_manager, effective_live)
+
+        else:  # DASH
+            if stream.is_live:
+                self._download_dash_live_stream(stream, bar_manager, live_decryption=effective_live, mpd_url=self.url, headers=self._build_headers())
+            else:
+                self._download_dash_stream(stream, bar_manager, effective_live)
 
     def _download_hls_stream(self, stream, bar_manager: DownloadBarManager, live_decryption: bool = False) -> None:
-        """Download an HLS stream, handling AES-128 decryption if needed."""
+        """Download a VOD HLS stream, handling AES-128 decryption if needed."""
         playlist_url = stream.playlist_url
         if not playlist_url:
             logger.error(f"HLS stream has no playlist_url: {stream}")
@@ -278,14 +325,13 @@ class MediaDownloader(BaseMediaDownloader):
         
         offset = len(dl_segs)
         for seg in media_segs:
-            dl_segs.append(
-                {
-                    "url":      seg["url"],
-                    "number":   seg["number"] + offset,
-                    "seg_type": "media",
-                    "enc":      seg["enc"],
-                }
-            )
+            dl_segs.append({
+                "url":      seg["url"],
+                "number":   seg["number"] + offset,
+                "seg_type": "media",
+                "enc":      seg["enc"],
+                "duration": seg.get("duration", 0.0),
+            })
 
         if self.max_segments and self.max_segments > 0:
             dl_segs = dl_segs[:1 + self.max_segments] if init_url else dl_segs[:self.max_segments]
@@ -294,7 +340,7 @@ class MediaDownloader(BaseMediaDownloader):
         self._download_stream_generic(dl_segs, stream, "hls", "ts", bar_manager, live_decryption=live_decryption)
 
     def _download_dash_stream(self, stream, bar_manager: DownloadBarManager, live_decryption: bool = False) -> None:
-        """Download a DASH stream, handling CENC live decryption if needed."""
+        """Download a VOD DASH stream, handling CENC live decryption if needed."""
         if not stream.segments:
             logger.error(f"DASH stream has no segments: {stream}")
             return
@@ -336,6 +382,17 @@ class MediaDownloader(BaseMediaDownloader):
                 dl_segs.append({"url": seg.url, "number": next_num, "seg_type": seg.seg_type, "enc": {"method": "NONE"}})
                 next_num += 1
 
+        # DASH VOD streams don't always include duration info for each segment, which complicates live decryption since we want to start decrypting as soon as the first segment is downloaded. 
+        # To work around this, if we have overall duration info for the stream, we can estimate an average duration for each media segment and assign it to the segment metadata.
+        # This allows the live decryption logic to function more smoothly even without per-segment durations provided by the manifest.
+        if not stream.is_live and stream.duration > 0:
+            media_segs_count = sum(1 for s in dl_segs if s.get("seg_type") == "media")
+            if media_segs_count > 0:
+                avg_dur = stream.duration / media_segs_count
+                for seg in dl_segs:
+                    if seg.get("seg_type") == "media":
+                        seg["duration"] = avg_dur
+
         if self.max_segments and self.max_segments > 0:
             dl_segs = dl_segs[:self.max_segments]
             logger.info(f"Limiting DASH download to {len(dl_segs)} segments (max_segments={self.max_segments})")
@@ -343,7 +400,7 @@ class MediaDownloader(BaseMediaDownloader):
         self._download_stream_generic(dl_segs, stream, "dash", "mp4", bar_manager, live_decryption=live_decryption)
 
     def _download_stream_generic(self, dl_segs: List[Dict], stream, protocol: str, default_ext: str, bar_manager: DownloadBarManager, live_decryption: bool = False) -> None:
-        """Generic stream download logic for both HLS and DASH, with optional live decryption."""
+        """Generic VOD stream download logic for both HLS and DASH, with optional live decryption."""
         task_key = self._stream_task_key(stream)
         total = len(dl_segs)
         stream_dir = self._make_stream_dir(stream, protocol)
@@ -352,9 +409,19 @@ class MediaDownloader(BaseMediaDownloader):
 
         key_cache: Dict[str, bytes] = {}
         segment_meta_by_path = {
-            normalize_path_key(str(stream_dir / f"seg_{seg['number']:08d}.bin")): seg
+            normalize_path_key(str(stream_dir / f"seg_{seg['number']:05d}.ts")): seg
             for seg in dl_segs
         }
+
+        # Pre-compute total duration from segment metadata (HLS only; DASH = 0.0)
+        _total_duration: float = sum(s.get("duration", 0.0) for s in dl_segs if s.get("seg_type") != "init")
+        _media_segs_only: List[Dict] = [s for s in dl_segs if s.get("seg_type") != "init"]
+        _seg_dur_cumulative: List[float] = []
+        _acc = 0.0
+        for _s in _media_segs_only:
+            _acc += _s.get("duration", 0.0)
+            _seg_dur_cumulative.append(_acc)
+
         decrypt_queue:  "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
         decrypt_errors: List[str] = []
         decrypt_thread: Optional[threading.Thread] = None
@@ -373,7 +440,7 @@ class MediaDownloader(BaseMediaDownloader):
                 if not target_path.exists() or target_path.stat().st_size <= 0:
                     return
                 probe_done = True
-            logger.info("%s probe starting -> %s (%s)", protocol.upper(), target_path.name, reason)
+            logger.info(f"{protocol.upper()} probe starting -> {target_path.name} ({reason})")
             self._probe_media_file(target_path)
 
         def _replace_segment_file(source_path: Path, target_path: Path, reason: str) -> None:
@@ -396,16 +463,31 @@ class MediaDownloader(BaseMediaDownloader):
                     if getattr(exc, "winerror", None) not in (5, 32) and not isinstance(exc, PermissionError):
                         raise
 
-                    logger.debug("%s replace retry %s/8 for %s -> %s: %s", reason, attempt, source_path.name, target_path.name, exc,)
+                    logger.debug(f"{reason} replace retry {attempt}/8 for {source_path.name} -> {target_path.name}: {exc}")
                     time.sleep(0.05 * attempt)
 
             if last_exc:
                 raise last_exc
 
+        def _fmt_dur(seconds: float) -> str:
+            s = int(seconds)
+            h, rem = divmod(s, 3600)
+            m, sec = divmod(rem, 60)
+            return f"{h:02d}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+        
         def _progress(done: int, total_: int, total_bytes: int, speed_bps: float, speed_label: Optional[str] = None) -> None:
             pct = int((done / total_) * 100) if total_ else 0
             estimated_total = _estimate_total_size(total_bytes, done, total_) if done > 0 else total_bytes
             size_display = (f"{_fmt_size(total_bytes)}/{_fmt_size(estimated_total)}" if done < total_ else f"{_fmt_size(total_bytes)}/{_fmt_size(total_bytes)}")
+
+            # Duration display: elapsed/total  (only when duration info is available)
+            duration_display = ""
+            if _total_duration > 0:
+                # media-only index: done excludes init seg counted in total_
+                media_done = max(0, done - (1 if any(s.get("seg_type") == "init" for s in dl_segs) else 0))
+                elapsed_dur = _seg_dur_cumulative[media_done - 1] if media_done > 0 and media_done <= len(_seg_dur_cumulative) else 0.0
+                duration_display = f"{_fmt_dur(elapsed_dur)}/{_fmt_dur(_total_duration)}"
+
             bar_manager.handle_progress_line(
                 {
                     "task_key": task_key,
@@ -413,6 +495,7 @@ class MediaDownloader(BaseMediaDownloader):
                     "segments": f"{done}/{total_}",
                     "size":     size_display,
                     "speed":    speed_label if speed_label is not None else _fmt_speed(speed_bps),
+                    "duration": duration_display,
                 }
             )
 
@@ -434,11 +517,11 @@ class MediaDownloader(BaseMediaDownloader):
                     key_data = r.content
 
                 if len(key_data) != 16:
-                    logger.warning("HLS AES-128 key length is %s bytes for %s", len(key_data), key_url)
+                    logger.warning(f"HLS AES-128 key length is {len(key_data)} bytes for {key_url}")
                 
                 key_cache[key_url] = key_data
 
-            logger.debug("AES-128 LIVE decrypt path=%s with key=%s", fp, describe_key_for_log(key_data))
+            logger.debug(f"AES-128 LIVE decrypt path={fp} with key={describe_key_for_log(key_data)}")
             decrypted = decrypt_aes128(fp.read_bytes(), key_data, enc.get("iv"), int(seg.get("number", 0) or 0),)
             tmp_path = fp.with_suffix(fp.suffix + ".dec")
             tmp_path.write_bytes(decrypted)
@@ -452,7 +535,7 @@ class MediaDownloader(BaseMediaDownloader):
                 return
             
             dec_tmp = fp.with_suffix(fp.suffix + ".dec")
-            logger.debug("CENC LIVE decrypt path=%s init=%s with key=%s", fp, init_path if init_path and init_path.exists() else "None", describe_key_for_log(self.key),)
+            logger.debug(f'CENC LIVE decrypt path={fp} init={init_path if init_path and init_path.exists() else "None"} with key={describe_key_for_log(self.key)}')
             ok, message, _data = dash_decryptor.decrypt_segment_live(encrypted_path=str(fp), decrypted_path=str(dec_tmp), raw_keys=self.key, init_path=str(init_path) if init_path and init_path.exists() else None,)
             if not ok:
                 raise RuntimeError(f"DASH live decrypt failed for {fp.name}: {message}")
@@ -487,7 +570,7 @@ class MediaDownloader(BaseMediaDownloader):
 
                     seg = segment_meta_by_path.get(normalize_path_key(str(fp)))
                     if not seg:
-                        logger.debug("Segment completion without metadata match: %s", fp)
+                        logger.debug(f"Segment completion without metadata match: {fp}")
                         continue
 
                     if protocol_lower == "hls":
@@ -524,7 +607,7 @@ class MediaDownloader(BaseMediaDownloader):
         needs_dash_live = protocol_lower == "dash" and live_decryption and bool(self.key)
 
         if needs_hls_decrypt or needs_dash_live:
-            logger.info("%s decrypt worker started (%s)", protocol.upper(), "AES-128" if needs_hls_decrypt else "live DASH")
+            logger.info(f'{protocol.upper()} decrypt worker started ({"AES-128" if needs_hls_decrypt else "live DASH"})')
             decrypt_thread = threading.Thread(target=_decrypt_worker, daemon=True)
             decrypt_thread.start()
 
@@ -580,7 +663,12 @@ class MediaDownloader(BaseMediaDownloader):
         binary_merge_segments(paths, out_path, merge_logger=logger)
         logger.info(f"{protocol.upper()} binary merge completed -> {out_path.name}")
 
-        if (not live_decryption) and self.key and out_path.exists() and out_path.stat().st_size > 0:
+        is_plain_subtitle = (
+            stream is not None
+            and getattr(stream, "type", "") == "subtitle"
+            and not getattr(stream, "is_wvtt_mp4", False)
+        )
+        if (not live_decryption) and self.key and out_path.exists() and out_path.stat().st_size > 0 and not is_plain_subtitle:
             post_merge_renamed = False
             post_merge_path    = out_path.with_suffix(out_path.suffix + ".dec")
             try:
@@ -618,7 +706,7 @@ class MediaDownloader(BaseMediaDownloader):
                         pass
 
         if out_path.exists() and out_path.stat().st_size > 0:
-            logger.info(f"{protocol.upper()} merged {len(paths):>4} segs -> {out_path.name} ({out_path.stat().st_size // 1024} KB)")
+            logger.debug(f"{protocol.upper()} merged {len(paths):>4} segs -> {out_path.name} ({out_path.stat().st_size // 1024} KB)")
             _progress(total, total, out_path.stat().st_size, 0.0, speed_label="Merge")
         else:
             logger.error(f"{protocol.upper()} binary merge produced empty file: {out_path}")
@@ -627,7 +715,19 @@ class MediaDownloader(BaseMediaDownloader):
         """Dispatch segment downloads to the external Velora binary."""
         try:
             plan_task_key = self._stream_task_key(stream) if stream else "download"
-            plan_label = (self._video_label if stream and stream.type == "video" else self._audio_labels.get((stream.language or "und").lower(), "") if stream and stream.type == "audio" else "")
+           
+            if stream and stream.type == "video":
+                plan_label = self._video_label
+            elif stream and stream.type == "audio":
+                plan_label = self._audio_labels.get((stream.language or "und").lower(), "")
+            elif stream and stream.type == "subtitle":
+                lang_raw  = (stream.language or "und").lower()
+                task_lang = lang_raw.split("-")[0]
+                plan_label = (self._sub_labels.get(lang_raw) or self._sub_labels.get(task_lang) or "")
+            else:
+                plan_label = ""
+            
+            logger.info(f"Starting download plan for {stream.type if stream else 'unknown stream'} with {len(segs)} segments, live_decrypt={self._session_live_decrypt}, plan_label='{plan_label}'")
             plan = {
                 "project": "Velora",
                 "version": 1,
@@ -648,7 +748,7 @@ class MediaDownloader(BaseMediaDownloader):
                         "label": plan_label or plan_task_key,
                         "display_label": plan_label or plan_task_key,
                         "url": seg["url"],
-                        "path": str(out_dir / f"seg_{seg['number']:08d}.bin"),
+                        "path": str(out_dir / f"seg_{seg['number']:05d}.ts"),
                         "headers": seg.get("headers", {}),   # Task-specific headers only, Velora handles merging with global
                     }
                     for seg in segs
@@ -698,11 +798,27 @@ class MediaDownloader(BaseMediaDownloader):
         """
         Build output filename so ``_build_status()`` can discover it.
 
-        - Video:  ``{filename}.{ext}``
-        - Audio:  ``{filename}.{lang}.m4a``
+        - Video:             ``{filename}.{ext}``
+        - Audio:             ``{filename}.{lang}.m4a``
+        - Subtitle wvtt-mp4: ``{filename}.{lang}.wvtt``
+        - Subtitle standard: ``{filename}.{lang}.{fmt}``  (vtt, ttml, …)
         """
         if stream.type == "video":
             return f"{self.filename}.{ext}"
-        lang      = re.sub(r"[^\w\-]", "_", (stream.language or "und").lower())
+
+        lang = re.sub(r"[^\w\-]", "_", (stream.language or "und").lower())
+
+        if stream.type == "subtitle":
+            if getattr(stream, "is_wvtt_mp4", False):
+                # WebVTT-in-MP4: downloaded as fMP4 segments, identified by .wvtt
+                return f"{self.filename}.{lang}.wvtt"
+            
+            # Standard DASH subtitle (VTT, TTML, …): use the stream's declared format
+            sub_ext = (stream.format or ext or "vtt").lower().strip()
+            if sub_ext in ("dash", "mp4", "m4s", ""):
+                sub_ext = "vtt"
+            return f"{self.filename}.{lang}.{sub_ext}"
+
+        # Audio
         audio_ext = "webm" if ext == "webm" else "m4a"
         return f"{self.filename}.{lang}.{audio_ext}"

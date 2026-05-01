@@ -32,7 +32,7 @@ class ExternalSupaDBVault:
         """Internal helper: POST to an endpoint, return parsed JSON or None on error."""
         url = f"{self.base_url}/{endpoint}"
         try:
-            logger.debug("Post to Supabase endpoint '%s' with payload: %s", endpoint, payload)
+            logger.debug(f"Post to Supabase endpoint '{endpoint}' with payload: {payload}")
             response = self.session.post(url, json=payload)
             response.raise_for_status()
             return response.json()

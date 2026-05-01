@@ -6,6 +6,11 @@ from rich.text import Text
 from VibraVid.utils import internet_manager
 
 
+SHOW_ELAPSED_REMAINING = True
+SHOW_SIZE = True
+SHOW_DURATION = False
+
+
 class CustomBarColumn(ProgressColumn):
     def __init__(self, bar_width=40, complete_char="-", incomplete_char="-", complete_style="bright_magenta", incomplete_style="dim white"):
         super().__init__()
@@ -33,44 +38,51 @@ class CustomBarColumn(ProgressColumn):
 
 
 class CompactTimeColumn(ProgressColumn):
-    def __init__(self, compact: bool = True):
-        super().__init__()
-        self.compact = compact
-
     def render(self, task):
+        if not SHOW_ELAPSED_REMAINING:
+            return Text("")
         elapsed = task.finished_time if task.finished else task.elapsed
         if elapsed is None:
-            return "[yellow]--:--[/yellow]"
-
-        return f"[yellow]{internet_manager.format_time(elapsed)}[/yellow]"
+            return Text.from_markup("[yellow]--:--[/yellow]")
+        return Text.from_markup(f"[yellow]{internet_manager.format_time(elapsed)}[/yellow]")
 
 
 class CompactTimeRemainingColumn(ProgressColumn):
     def render(self, task):
+        if not SHOW_ELAPSED_REMAINING:
+            return Text("")
         remaining = task.time_remaining
         if remaining is None:
-            return "[cyan]--:--[/cyan]"
-
-        return f"[cyan]{internet_manager.format_time(remaining)}[/cyan]"
+            return Text.from_markup("[cyan]--:--[/cyan]")
+        return Text.from_markup(f"[cyan]{internet_manager.format_time(remaining)}[/cyan]")
 
 
 class ColoredSegmentColumn(ProgressColumn):
     def render(self, task):
         segment = task.fields.get("segment", "0/0")
+        text = Text()
         if "/" in segment:
             current, total = segment.split("/")
-            return f"[green]{current}[/green][dim]/[/dim][cyan]{total}[/cyan]"
-        return f"[yellow]{segment}[/yellow]"
+            text.append(current, style="green")
+            text.append("/", style="dim")
+            text.append(total, style="cyan")
+        else:
+            text.append(segment, style="yellow")
+        return text
 
 
 class SizeColumn(ProgressColumn):
     def render(self, task):
         size = task.fields.get("size", "0B/0B")
+        text = Text()
         if "/" in size:
             current, total = size.split("/")
-            return f"[dim]{current}/[/dim][green]{total}[/green]"
-        return f"[green]{size}[/green]"
-
+            text.append(current, style="dim")
+            text.append("/", style="dim")
+            text.append(total, style="green")
+        else:
+            text.append(size, style="green")
+        return text
 
 class TransferStatsColumn(ProgressColumn):
     def render(self, task):
@@ -79,11 +91,12 @@ class TransferStatsColumn(ProgressColumn):
 
         size = task.fields.get("size", "")
         speed = task.fields.get("speed", "")
-
+        duration = task.fields.get("duration", "")
         text = Text()
-        has_size = False
+        has_content = False
 
-        if size:
+        # SIZE
+        if size and SHOW_SIZE:
             if "/" in size:
                 current, total = size.split("/", 1)
                 text.append(current, style="dim")
@@ -91,10 +104,28 @@ class TransferStatsColumn(ProgressColumn):
                 text.append(total, style="green")
             else:
                 text.append(size, style="green")
-            has_size = True
+            has_content = True
 
+        # DURATION
+        if duration and SHOW_DURATION:
+            if has_content:
+                text.append(" ", style="dim")
+            text.append("|", style="dim")
+            text.append(" ", style="dim")
+
+            if "/" in duration:
+                elapsed_d, total_d = duration.split("/", 1)
+                text.append(elapsed_d, style="yellow")
+                text.append("/", style="dim")
+                text.append(total_d, style="cyan")
+            else:
+                text.append(duration, style="yellow")
+
+            has_content = True
+
+        # SPEED
         if speed:
-            if has_size:
+            if has_content:
                 text.append(" ")
             text.append("@", style="dim")
             text.append(" ")

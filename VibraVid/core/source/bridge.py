@@ -29,7 +29,7 @@ def _safe_event_cb(event_cb: Optional[Callable[[Dict[str, Any]], None]], event: 
         with _EVENT_CB_LOCK:
             event_cb(event)
     except Exception as exc:
-        logger.debug("event_cb raised: %s", exc)
+        logger.debug(f"event_cb raised: {exc}")
 
 
 def _safe_progress_cb(progress_cb: Optional[Callable[[int, int, int, float], None]], done: int, total: int, total_bytes: int, speed: float) -> None:
@@ -39,7 +39,7 @@ def _safe_progress_cb(progress_cb: Optional[Callable[[int, int, int, float], Non
         with _PROGRESS_CB_LOCK:
             progress_cb(done, total, total_bytes, speed)
     except Exception as exc:
-        logger.debug("progress_cb raised: %s", exc)
+        logger.debug(f"progress_cb raised: {exc}")
 
 
 def _request_stop_via_stdin(process: subprocess.Popen[str]) -> bool:
@@ -50,7 +50,7 @@ def _request_stop_via_stdin(process: subprocess.Popen[str]) -> bool:
         process.stdin.flush()
         return True
     except Exception as exc:
-        logger.debug("Failed to send stop event on stdin: %s", exc)
+        logger.debug(f"Failed to send stop event on stdin: {exc}")
         return False
 
 
@@ -65,7 +65,7 @@ def _terminate_process_tree(process: subprocess.Popen[str], graceful_timeout: fl
     except subprocess.TimeoutExpired:
         pass
     except Exception as exc:
-        logger.debug("Graceful terminate failed: %s", exc)
+        logger.debug(f"Graceful terminate failed: {exc}")
 
     if os.name == "nt":
         try:
@@ -77,14 +77,14 @@ def _terminate_process_tree(process: subprocess.Popen[str], graceful_timeout: fl
                 text=True,
             )
         except Exception as exc:
-            logger.debug("taskkill failed: %s", exc)
+            logger.debug(f"taskkill failed: {exc}")
     else:
         try:
             import signal
 
             os.killpg(process.pid, signal.SIGKILL)
         except Exception as exc:
-            logger.debug("killpg failed: %s", exc)
+            logger.debug(f"killpg failed: {exc}")
 
     try:
         process.wait(timeout=2.0)
@@ -104,7 +104,7 @@ def _stop_process_orderly(process: subprocess.Popen[str], graceful_timeout: floa
         except subprocess.TimeoutExpired:
             logger.debug("Stop event sent but process did not exit in time")
         except Exception as exc:
-            logger.debug("Error while waiting after stop event: %s", exc)
+            logger.debug(f"Error while waiting after stop event: {exc}")
 
     _terminate_process_tree(process, graceful_timeout=graceful_timeout)
 
@@ -320,7 +320,7 @@ def run_download_plan(plan: Dict[str, Any], progress_cb: Optional[Callable[[int,
             try:
                 event: Dict[str, Any] = json.loads(line)
             except json.JSONDecodeError:
-                logger.info("Failed to decode JSON from Velora: %s", line)
+                logger.info(f"Failed to decode JSON from Velora: {line}")
                 continue
 
             # Enrich event with url/headers from the plan when missing.
@@ -409,11 +409,11 @@ def run_download_plan(plan: Dict[str, Any], progress_cb: Optional[Callable[[int,
             try:
                 return_code = process.wait(timeout=max(wait_timeout_seconds, 1.0))
             except subprocess.TimeoutExpired:
-                logger.error("Velora wait timeout (%.1fs), terminating process tree", wait_timeout_seconds)
+                logger.error(f"Velora wait timeout ({wait_timeout_seconds:.1f}s), terminating process tree")
                 _terminate_process_tree(process, graceful_timeout=2.0)
                 return_code = process.returncode
             if return_code not in (0, None):
-                logger.warning("Velora exited with code %s", return_code)
+                logger.warning(f"Velora exited with code {return_code}")
 
         return results
 

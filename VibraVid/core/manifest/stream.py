@@ -268,6 +268,8 @@ class Stream:
     format: str = ""
     is_external: bool = False
     supports_live_decryption: bool = True  # Default True, parsers will set False when needed
+    is_live: bool = False
+    is_wvtt_mp4: bool = False
 
     def add_segment(self, seg: Segment) -> None:
         self.segments.append(seg)
@@ -323,10 +325,6 @@ class Stream:
         from VibraVid.core.utils.codec import get_channel_label as _gcl
         return _gcl(self.channels) if self.channels else ""
 
-    def get_language_name(self) -> str:
-        from VibraVid.core.utils.codec import get_language_name as _gln
-        return _gln(self.language)
-
     def get_hdr_display(self) -> str:
         vr = (self.video_range or "").upper()
         return vr if vr and vr != "SDR" else ""
@@ -372,7 +370,8 @@ class Stream:
                 parts = [id_s, lang, self.bitrate_display if self.bitrate else None, codec, ch, sr, flags, drm]
 
             else:  # subtitle
-                parts = [id_s, lang, codec, flags]
+                wvtt_tag = "wvtt-mp4" if self.is_wvtt_mp4 else None
+                parts = [id_s, lang, codec, wvtt_tag, flags]
 
             filtered = [p for p in parts if p]
             return f"Stream({self.type} | {' | '.join(filtered)})"
@@ -385,10 +384,14 @@ class Stream:
         drm_s = f", {self.drm.get_drm_display()}" if self.drm.is_encrypted() else ""
         hdr_s = f", {self.video_range}" if self.video_range and self.video_range != "SDR" else ""
         lang_s = self.resolved_language or self.language
+
         if self.type == "video":
             return f"Stream(video, {self.resolution}{hdr_s}, {self.bitrate_display}{drm_s})"
+        
         if self.type == "audio":
             flags = self.get_flags_display()
             return f"Stream(audio, {lang_s}{f' {flags}' if flags else ''}, {self.bitrate_display}{drm_s})"
+        
         flags = self.get_flags_display()
-        return f"Stream({self.type}, {lang_s}{f' {flags}' if flags else ''})"
+        wvtt_s = " [wvtt-mp4]" if self.is_wvtt_mp4 else ""
+        return f"Stream({self.type}, {lang_s}{f' {flags}' if flags else ''}{wvtt_s})"
