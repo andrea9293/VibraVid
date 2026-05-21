@@ -51,7 +51,7 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo cp scripts/nas-update.sh /usr/local/bin/vibravid-updater.sh
+sudo cp docker/scripts/nas-update.sh /usr/local/bin/vibravid-updater.sh
 sudo chmod +x /usr/local/bin/vibravid-updater.sh
 sudo systemctl daemon-reload
 sudo systemctl enable --now vibravid-updater
@@ -63,7 +63,7 @@ sudo systemctl enable --now vibravid-updater
 2. Set **User** to `root`.
 3. Set **Command** to:
    ```
-   VIBRAVID_COMPOSE_DIR=/volume1/docker/vibravid VIBRAVID_DB_HOST_DIR=/volume1/docker/vibravid/db /volume1/docker/vibravid/scripts/nas-update.sh >> /var/log/vibravid-updater.log 2>&1
+   VIBRAVID_COMPOSE_DIR=/volume1/docker/vibravid VIBRAVID_DB_HOST_DIR=/volume1/docker/vibravid/db /volume1/docker/vibravid/docker/scripts/nas-update.sh >> /var/log/vibravid-updater.log 2>&1
    ```
 4. Click **OK**.
 
@@ -71,7 +71,7 @@ sudo systemctl enable --now vibravid-updater
 
 ```bash
 # Add to root's crontab:
-@reboot VIBRAVID_COMPOSE_DIR=/opt/vibravid VIBRAVID_DB_HOST_DIR=/opt/vibravid/db /opt/vibravid/scripts/nas-update.sh >> /var/log/vibravid-updater.log 2>&1
+@reboot VIBRAVID_COMPOSE_DIR=/opt/vibravid VIBRAVID_DB_HOST_DIR=/opt/vibravid/db /opt/vibravid/docker/scripts/nas-update.sh >> /var/log/vibravid-updater.log 2>&1
 ```
 
 ### Manual update (without the script)

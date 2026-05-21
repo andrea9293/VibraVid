@@ -31,7 +31,7 @@ _CURRENT_SRC_RE = re.compile(r'currentSrc[^"]+"(https:[^";]+)', re.S)
 
 
 class VideoSource:
-    def __init__(self, imdb_id: str, season_number: int, episode_number: int, embed_domain: str = "https://v.vidxgo.co"):
+    def __init__(self, imdb_id: str, season_number: int = None, episode_number: int = None, embed_domain: str = "https://v.vidxgo.co", content_type: str = "series"):
         self.imdb_id = str(imdb_id).strip()
         if self.imdb_id.startswith("tt"):
             self.imdb_id = self.imdb_id[2:]
@@ -39,6 +39,7 @@ class VideoSource:
         self.season_number = season_number
         self.episode_number = episode_number
         self.embed_domain = embed_domain.rstrip("/")
+        self.content_type = content_type
 
     @staticmethod
     def decode_embed_html(html_text: str) -> str | None:
@@ -74,7 +75,10 @@ class VideoSource:
             logger.error("VidXgo requires an IMDB ID")
             return None
 
-        embed_url = f"{self.embed_domain}/tt{self.imdb_id}/{self.season_number}/{self.episode_number}"
+        if self.content_type == "movie":
+            embed_url = f"{self.embed_domain}/tt{self.imdb_id}"
+        else:
+            embed_url = f"{self.embed_domain}/tt{self.imdb_id}/{self.season_number}/{self.episode_number}"
 
         try:
             client = create_client()

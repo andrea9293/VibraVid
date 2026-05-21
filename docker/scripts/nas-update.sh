@@ -13,10 +13,10 @@
 #   Synology Scheduled Task (DSM 7):
 #     Control Panel → Task Scheduler → Create → Triggered task → Boot-up
 #     User: root
-#     Command: /volume1/docker/vibravid/scripts/nas-update.sh
+#     Command: /volume1/docker/vibravid/docker/scripts/nas-update.sh
 #
 #   cron (any Linux):
-#     @reboot /path/to/scripts/nas-update.sh >> /var/log/vibravid-updater.log 2>&1
+#     @reboot /path/to/docker/scripts/nas-update.sh >> /var/log/vibravid-updater.log 2>&1
 #
 # ── Configuration ──────────────────────────────────────────────────────────────
 

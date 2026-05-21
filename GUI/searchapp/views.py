@@ -2101,7 +2101,7 @@ def trigger_update(request: HttpRequest) -> JsonResponse:
     """Write a sentinel file that a host-side update script can watch.
 
     The container itself cannot run docker compose — it writes a marker file
-    to /app/data/.update_requested so an external script (scripts/nas-update.sh)
+    to /app/data/.update_requested so an external script (docker/scripts/nas-update.sh)
     can detect it and perform the actual image pull + container recreation.
     """
     sentinel = os.path.join(os.environ.get("DJANGO_DB_DIR", "/app/data"), ".update_requested")
