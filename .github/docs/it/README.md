@@ -747,8 +747,7 @@ Di seguito i punti essenziali per iniziare.
     "enable_polling": true,
     "provider_fallback": [
         "streamingcommunity",
-        "animeunity",
-        "guardaserie"
+        "animeunity"
     ],
     "path_mapping": {},
     "sonarr": { "url": "http://sonarr:8989", "api_key": "" },

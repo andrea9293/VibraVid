@@ -15,6 +15,7 @@ from VibraVid.utils.http_client import create_client, get_headers
 console = Console()
 logger = logging.getLogger(__name__)
 api_key = config_manager.login.get("TMDB", "api_key")
+MAX_SEARCH_RESULTS = 9
 
 
 class TMDBClient:
@@ -22,6 +23,7 @@ class TMDBClient:
         """Initialize the class with the API key."""
         self.api_key = api_key
         self.base_url = "https://api.themoviedb.org/3"
+        self._cache: dict = {}
 
     def _make_request(self, endpoint, params=None, retries=3):
         """Make a request to the given API endpoint with optional parameters."""
@@ -33,6 +35,12 @@ class TMDBClient:
             return {}
 
         params['api_key'] = self.api_key
+
+        cache_key = endpoint + str(sorted((k, v) for k, v in params.items() if k != 'api_key'))
+        if cache_key in self._cache:
+            logger.debug(f"Cache hit: {endpoint}")
+            return self._cache[cache_key]
+
         url = f"{self.base_url}/{endpoint}"
         
         for attempt in range(retries + 1):
@@ -41,7 +49,9 @@ class TMDBClient:
                 response = client.get(url, params=params)
                 client.close()
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                self._cache[cache_key] = data
+                return data
             
             except Exception as e:
                 if attempt < retries:
@@ -72,7 +82,6 @@ class TMDBClient:
 
     def get_type_and_id_by_slug_year(self, slug: str, year: str = None, media_type: str = None, language_preference: str = "it"):
         """Get the type (movie or tv) and ID from TMDB based on slug and year."""
-        # Anime often dont have a year, so we should be flexible with it
         if year:
             year = int(year)
 
@@ -80,11 +89,9 @@ class TMDBClient:
             movie_results = self._make_request("search/movie", {"query": slug.replace('-', ' '), "language": language_preference}).get("results", [])
             logger.info(f"Found {len(movie_results)} movie results for slug '{slug}' and year '{year}'")
 
-            # 1 result
             if len(movie_results) == 1:
                 return {'type': "movie", 'id': movie_results[0]['id']}
             
-            # Multiple results
             for movie in movie_results:
                 title = movie.get('title')
                 release_date = movie.get('release_date')
@@ -96,7 +103,6 @@ class TMDBClient:
                 
                 movie_slug = self._slugify(title)
                 
-                # Use fuzzy matching instead of exact comparison
                 if self._slugs_match(movie_slug, slug) and (not year or movie_year == year):
                     return {'type': "movie", 'id': movie['id']}
         
@@ -104,11 +110,9 @@ class TMDBClient:
             tv_results = self._make_request("search/tv", {"query": slug.replace('-', ' '), "language": language_preference}).get("results", [])
             logger.info(f"Found {len(tv_results)} TV results for slug '{slug}' and year '{year}'")
 
-            # 1 result
             if len(tv_results) == 1:
                 return {'type': "tv", 'id': tv_results[0]['id']}
             
-            # Multiple results
             for show in tv_results:
                 name = show.get('name')
                 first_air_date = show.get('first_air_date')
@@ -120,7 +124,6 @@ class TMDBClient:
                 
                 show_slug = self._slugify(name)
                 
-                # Use fuzzy matching instead of exact comparison
                 if self._slugs_match(show_slug, slug) and (not year or show_year == year):
                     return {'type': "tv", 'id': show['id']}
                 
@@ -134,11 +137,9 @@ class TMDBClient:
             results = self._make_request("search/movie", {"query": slug.replace('-', ' '), "language": language_preference}).get("results", [])
             logger.info(f"Found {len(results)} movie results for slug '{slug}'")
 
-            # 1 result
             if len(results) == 1:
                 return int(results[0]['release_date'][:4])
             
-            # Multiple results
             for movie in results:
                 title = movie.get('title')
                 release_date = movie.get('release_date')
@@ -148,7 +149,6 @@ class TMDBClient:
                 
                 movie_slug = self._slugify(title)
                 
-                # Use fuzzy matching
                 if self._slugs_match(movie_slug, slug):
                     return int(release_date[:4])
                     
@@ -156,11 +156,9 @@ class TMDBClient:
             results = self._make_request("search/tv", {"query": slug.replace('-', ' '), "language": language_preference}).get("results", [])
             logger.info(f"Found {len(results)} TV results for slug '{slug}'")
 
-            # 1 result
             if len(results) == 1:
                 return int(results[0]['first_air_date'][:4])
             
-            # Multiple results
             for show in results:
                 name = show.get('name')
                 first_air_date = show.get('first_air_date')
@@ -170,7 +168,6 @@ class TMDBClient:
                 
                 show_slug = self._slugify(name)
                 
-                # Use fuzzy matching
                 if self._slugs_match(show_slug, slug):
                     return int(first_air_date[:4])
         
@@ -202,8 +199,10 @@ class TMDBClient:
         return None
 
     def get_movie_details(self, tmdb_id: int):
-        """Get movie details including title and IMDB ID."""
-        details = self._make_request(f"movie/{tmdb_id}", {"language": "it"})
+        """
+        Get movie details including title and IMDB ID.
+        """
+        details = self._make_request(f"movie/{tmdb_id}", {"language": "it", "append_to_response": "external_ids"})
         logger.info(f"Got details for movie ID {tmdb_id}: {details.get('title')} (IMDB ID: {details.get('imdb_id')})")
 
         return {
@@ -215,7 +214,7 @@ class TMDBClient:
         """
         Search for movies and return a list of results with details.
         Only returns movies that have a valid IMDB ID.
-        
+
         Parameters:
             - query (str): The search query
             - language_preference (str): Language preference (default: "it")
@@ -223,25 +222,25 @@ class TMDBClient:
         Returns:
             - list: List of dicts containing movie info (id, title, release_date, imdb_id, popularity)
         """
-        results = self._make_request("search/movie", {"query": query, "language": language_preference}).get("results", [])
-        logger.info(f"Found {len(results)} movie results for query '{query}' and language '{language_preference}'")
-        
+        results = self._make_request(
+            "search/movie", {"query": query, "language": language_preference}
+        ).get("results", [])
+        logger.info(f"Found {len(results)} movie results for query '{query}'")
+
         movies = []
-        for movie in results:
-            details = self._make_request(f"movie/{movie.get('id')}", {"language": language_preference})
+        for movie in results[:MAX_SEARCH_RESULTS]:
+            details = self._make_request(f"movie/{movie.get('id')}", {"language": language_preference, "append_to_response": "external_ids"})
             imdb_id = details.get('imdb_id')
             
-            # Only include movies with valid IMDB ID
             if imdb_id:
-                movie_data = {
+                movies.append({
                     'id': movie.get('id'),
                     'title': movie.get('title'),
                     'release_date': movie.get('release_date'),
                     'popularity': movie.get('popularity'),
                     'poster_path': movie.get('poster_path'),
                     'imdb_id': imdb_id
-                }
-                movies.append(movie_data)
+                })
         
         return movies
 
@@ -257,25 +256,24 @@ class TMDBClient:
             - list: List of dicts containing series info (id, name, first_air_date, popularity)
         """
         results = self._make_request("search/tv", {"query": query, "language": language_preference}).get("results", [])
-        logger.info(f"Found {len(results)} TV results for query '{query}' and language '{language_preference}'")
+        logger.info(f"Found {len(results)} TV results for query '{query}'")
 
         series = []
-        for show in results:
+        for show in results[:MAX_SEARCH_RESULTS]:
             details = self._make_request(f"tv/{show.get('id')}/external_ids", {"language": language_preference})
             imdb_id = details.get('imdb_id')
 
             if not imdb_id:
                 continue
 
-            series_data = {
+            series.append({
                 'id': show.get('id'),
                 'name': show.get('name'),
                 'first_air_date': show.get('first_air_date'),
                 'popularity': show.get('popularity'),
                 'poster_path': show.get('poster_path'),
                 'imdb_id': imdb_id
-            }
-            series.append(series_data)
+            })
 
         return series
 
@@ -291,17 +289,14 @@ class TMDBClient:
         Returns:
             - list: List of titles in the specified language
         """
-        endpoint = f"{media_type}/{tmdb_id}/alternative_titles"
-        data = self._make_request(endpoint, {"language": language})
+        details = self._make_request(f"{media_type}/{tmdb_id}", {"language": language, "append_to_response": "alternative_titles"})
         titles = []
 
-        # Get titles in the specified language
-        for title_data in data.get("titles", []):
+        alt_titles_data = details.get("alternative_titles", {})
+        for title_data in alt_titles_data.get("titles", []):
             if title_data.get("iso_3166_1") == language.upper() or title_data.get("type") == "":
                 titles.append(title_data.get("title", ""))
 
-        # Also get the main title
-        details = self._make_request(f"{media_type}/{tmdb_id}", {"language": language})
         main_title = details.get("title" if media_type == "movie" else "name", "")
         if main_title and main_title not in titles:
             titles.append(main_title)

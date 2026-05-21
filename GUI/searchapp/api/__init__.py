@@ -12,7 +12,6 @@ _LOAD_ERRORS: List[str] = []
 _INITIALIZED = False
 _PREFERRED_ORDER = [
     'streamingcommunity',
-    'guardaserie',
     'animeunity',
     'animeworld',
     'crunchyroll',

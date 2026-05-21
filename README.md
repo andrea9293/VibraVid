@@ -496,7 +496,6 @@ Tags are created in Sonarr/Radarr under Settings → Tags, then assigned to indi
 | Tag | Behaviour |
 |-----|-----------|
 | `provider-animeunity` | Uses AnimeUnity for that title |
-| `provider-guardaserie` | Uses GuardaSerie for that title |
 | `provider-<site>` | Uses any supported VibraVid site for that title |
 | `hold` / `pausa` | Skips the item until the tag is removed |
 | `skip-s1`, `skip-s2`, … | Skips a specific season of a series |
@@ -511,7 +510,6 @@ Recommended full configuration (covers general content, anime, and niche service
 "provider_fallback": [
     "streamingcommunity",
     "animeunity",
-    "guardaserie",
     "discoveryplus",
     "discovery",
     "dmax",

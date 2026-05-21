@@ -3,9 +3,10 @@
 import importlib
 from typing import List, Optional
 
-from .base import BaseStreamingAPI, Entries, Season
+from .base import BaseStreamingAPI, Entries, Season, Episode
 
 from VibraVid.services._base.site_loader import get_folder_name
+from VibraVid.services.mostraguarda.scrapper import GetSerieInfo
 
 
 class MostraguardaAPI(BaseStreamingAPI):
@@ -13,6 +14,7 @@ class MostraguardaAPI(BaseStreamingAPI):
         super().__init__()
         self.site_name = "mostraguarda"
         self._search_fn = None
+        self.scrape_serie = None
     
     def _get_search_fn(self):
         """Lazy load the search function."""
@@ -61,7 +63,53 @@ class MostraguardaAPI(BaseStreamingAPI):
         """
         Mostraguarda supports only movies, hence no series metadata.
         """
-        return None
+        # If media_item is a movie, no seasons
+        if media_item.is_movie:
+            return None
+
+        scrape_serie = self.get_cached_scraper(media_item)
+        if not scrape_serie:
+            scrape_serie = GetSerieInfo(
+                media_item.id,
+                media_item.name,
+                getattr(media_item, 'imdb_id', None),
+                getattr(media_item, 'year', None)
+            )
+            self.set_cached_scraper(media_item, scrape_serie)
+
+        seasons_count = scrape_serie.getNumberSeason()
+        if not seasons_count:
+            return None
+
+        seasons: List[Season] = []
+        for s in scrape_serie.seasons_manager.seasons:
+            season_num = s.number
+            season_name = getattr(s, 'name', None)
+
+            episodes_raw = scrape_serie.getEpisodeSeasons(s.number)
+            episodes: List[Episode] = []
+            seen_numbers = set()
+
+            for idx, ep in enumerate(episodes_raw or [], 1):
+                ep_number = getattr(ep, 'number', None)
+                if not ep_number and ep_number != 0:
+                    ep_number = idx
+
+                if ep_number in seen_numbers:
+                    continue
+
+                seen_numbers.add(ep_number)
+                episode = Episode(
+                    number=ep_number,
+                    name=getattr(ep, 'name', f"Episodio {idx}"),
+                    id=getattr(ep, 'id', idx),
+                    language=getattr(ep, 'language', None)
+                )
+                episodes.append(episode)
+
+            seasons.append(Season(number=season_num, episodes=episodes, name=season_name))
+
+        return seasons if seasons else None
 
     def start_download(self, media_item: Entries, season: Optional[str] = None, episodes: Optional[str] = None) -> bool:
         """
@@ -76,5 +124,14 @@ class MostraguardaAPI(BaseStreamingAPI):
             True if download started successfully
         """
         search_fn = self._get_search_fn()
-        search_fn(direct_item=media_item.raw_data, selections=None, scrape_serie=None)
+
+        selections = None
+        if season or episodes:
+            selections = {
+                'season': season,
+                'episode': episodes
+            }
+
+        scrape_serie = self.get_cached_scraper(media_item)
+        search_fn(direct_item=media_item.raw_data, selections=selections, scrape_serie=scrape_serie)
         return True

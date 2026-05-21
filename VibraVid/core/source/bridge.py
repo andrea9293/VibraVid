@@ -250,7 +250,6 @@ def run_download_plan(plan: Dict[str, Any], progress_cb: Optional[Callable[[int,
             tmp.flush()
 
         command = (["dotnet", binary_path, plan_path] if binary_path.lower().endswith(".dll") else [binary_path, plan_path])
-        logger.info(f"Launching Velora with command: {command}")
 
         process = subprocess.Popen(
             command,
