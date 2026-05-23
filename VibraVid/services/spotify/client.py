@@ -9,7 +9,7 @@ from VibraVid.utils.http_client import create_client, get_userAgent
 
 logger = logging.getLogger(__name__)
 BASE_URL = "https://jumo-dl.pages.dev"
-REGION = "FR"
+REGION = "US"
 
 # Jumo audio format IDs. 27 = FLAC; 6 = MP3 320.
 FORMAT_FLAC = 27
