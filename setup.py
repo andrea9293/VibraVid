@@ -31,8 +31,8 @@ def get_version():
     
     # Fallback for installed package
     try:
-        import pkg_resources
-        return pkg_resources.get_distribution('VibraVid').version
+        from importlib.metadata import version
+        return version('VibraVid')
     except Exception:
         pass
     
