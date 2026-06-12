@@ -5,15 +5,6 @@ env:
 
 on:
     workflow_dispatch:
-        inputs:
-            publish_pypi:
-                description: "Pubblicare su PyPI (true) o compilare eseguibili? (false)"
-                required: true
-                default: "false"
-                type: choice
-                options:
-                    - "true"
-                    - "false"
     push:
         branches:
             - main
@@ -121,39 +112,9 @@ jobs:
                       echo "CHANGELOG_EOF"
                   } >> $GITHUB_OUTPUT
 
-    publish-pypi:
-        needs: prepare
-        if: needs.prepare.outputs.is_release == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_pypi == 'true')
-        runs-on: ubuntu-latest
-
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0
-
-            - name: Set up Python
-              uses: actions/setup-python@v5
-              with:
-                  python-version: "3.13"
-
-            - name: Install packaging dependencies
-              run: |
-                  python -m pip install --upgrade pip
-                  python -m pip install --upgrade setuptools>=61.0.0 wheel twine build
-
-            - name: Build package
-              run: python -m build
-
-            - name: Upload to PyPI
-              env:
-                  TWINE_USERNAME: __token__
-                  TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-              run: twine upload --skip-existing dist/*
-
     build-binaries:
         needs: prepare
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_pypi == 'false')
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         strategy:
             matrix:
                 include:

@@ -8,11 +8,12 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from VibraVid.core.muxing.helper.video import binary_merge_segments
 from VibraVid.core.ui.bar_manager import console
-from VibraVid.core.source.download_utils import (format_size as _fmt_size, format_speed as _fmt_speed, fmt_dur as _fmt_dur)
 from VibraVid.core.manifest.mpd import DashParser
 from VibraVid.core.decryptor import Decryptor
 from VibraVid.utils.http_client import create_client
 from VibraVid.utils import config_manager
+
+from VibraVid.core.velora.download_utils import format_size as _fmt_size, format_speed as _fmt_speed, fmt_dur as _fmt_dur
 
 from ._hls_utils import hls_base_url, parse_hls_live_playlist
 from ._stream_helpers import detect_seg_ext

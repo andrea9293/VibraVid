@@ -1,14 +1,13 @@
 # 22.02.25
 
-import os
 import logging
-import tempfile
 from typing import Optional
 
 from rich.console import Console
 
 from VibraVid.core.decryptor._mp4_inspector import parse_binary
 from VibraVid.core.drm.system import KNOWN_DRM_SYSTEMS
+from VibraVid.utils.os import os_manager
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -56,17 +55,8 @@ class DRMProbe:
     @staticmethod
     def _parse_bytes(raw: bytes):
         """Write *raw* to a temp file, run ``parse_binary``, then delete."""
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4probe") as tmp:
-            tmp.write(raw)
-            tmp_path = tmp.name
-
-        try:
+        with os_manager.temp_binary_file(raw, suffix=".mp4probe") as tmp_path:
             return parse_binary(tmp_path)
-        finally:
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
 
     def _resolve_drm_names(self, pssh_boxes: list) -> list:
         """Given a list of PSSH boxes, return a list of known DRM system names (if any) and log any unknown system IDs."""

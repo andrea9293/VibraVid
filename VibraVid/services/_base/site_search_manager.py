@@ -92,7 +92,6 @@ def get_select_title(table_show_manager, media_search_manager):
     Returns:
         Entries: The selected media item, or None if no selection is made or an error occurs.
     """
-    logger.info("Preparing media items for selection.")
     if not media_search_manager.media_list:
         return None
 
@@ -123,7 +122,6 @@ def get_select_title(table_show_manager, media_search_manager):
             column_info[key.capitalize()] = {'color': available_colors[color_index % len(available_colors)]}
             color_index += 1
 
-    logger.info(f"Column info for display: {column_info}")
     table_show_manager.clear() 
     table_show_manager.add_column(column_info)
 
@@ -179,7 +177,6 @@ def base_process_search_result(select_title: Optional[Entries], download_film_fu
     Returns:
         bool: True if processing was successful, False otherwise
     """
-    logger.info(f"Processing selected title: {select_title}")
     if not select_title:
         console.print("[yellow]No title selected or selection cancelled.")
         logger.error("No title selected or selection cancelled.")
@@ -210,7 +207,6 @@ def base_process_search_result(select_title: Optional[Entries], download_film_fu
             if not scrape_serie:
                 scrape_serie = selections.get('scrape_serie')
         
-        logger.info(f"Initiating download for series with season: {season_selection}, episode: {episode_selection}")
         result = download_series_func(select_title, season_selection, episode_selection, scrape_serie)
         _handle_download_result(result)
         
@@ -337,7 +333,6 @@ def base_search(title_search_func: Callable[[str], int], process_result_func: Ca
         logger.info(f"Using provided search string: {string_to_search}")
         actual_search_query = string_to_search.strip()
     else:
-        logger.info("Prompting user for search input.")
         actual_search_query = msg.ask(f"\n[purple]Insert a word to search in [green]{site_name}").strip()
 
     # Search on database

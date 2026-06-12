@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from VibraVid.setup import get_velora_path
-from VibraVid.core.source.download_utils import (normalize_path_key, format_size, format_speed, estimate_total_size)
+from VibraVid.core.velora.download_utils import normalize_path_key, format_size, format_speed, estimate_total_size
 
 
 logger = logging.getLogger("velora_bridge")

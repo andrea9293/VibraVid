@@ -4,7 +4,7 @@ import os
 import subprocess
 import logging
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from rich.console import Console
 
@@ -14,7 +14,7 @@ from VibraVid.core.ui.tracker import context_tracker
 from VibraVid.core.utils.language import resolve_iso639_2
 
 from .helper.video import detect_ts_timestamp_issues, convert_ts_to_mp4, resolve_compatible_extension, is_mpegts_file
-from .helper.audio import check_duration_v_a, has_audio, get_video_duration
+from .helper.audio import check_duration_v_a, has_audio, get_video_duration, detect_audio_offset
 from .helper.sub import convert_subtitle, extract_vtt_from_wvtt_mp4
 from .capture import capture_ffmpeg_real_time
 
@@ -415,17 +415,35 @@ def join_audios(video_path: str, audio_tracks: List[Dict[str, str]], out_path: s
         merged_only, mv_result = join_video(video_path, out_path)
         return merged_only, False, mv_result
 
-    # Check duration differences and log info/warnings
+    # Check duration differences
+    reference_audio: Optional[str] = None
+
     for audio_track in audio_tracks:
         audio_path = audio_track.get('path')
         audio_lang = audio_track.get('name', 'unknown')
+
         _, diff, video_duration, audio_duration = check_duration_v_a(video_path, audio_path)
         diff_str = (f"+{(video_duration - audio_duration):.2f}s" if (video_duration - audio_duration) >= 0 else f"{(video_duration - audio_duration):.2f}s")
         console.print(f'[yellow]    - [cyan]Audio lang [red]{audio_lang}, [cyan]Video: [red]{video_duration:.2f}s, [cyan]Diff: [red]{diff_str}')
-        
+
         if diff > limit_duration_diff:
-            console.print(f'[yellow]    WARN [cyan]Audio lang: [red]{audio_lang!r} [cyan]has a duration difference of [red]{diff:.2f}s [cyan]which exceeds the limit of [red]{limit_duration_diff}s.')
+            logger.warning(f"Duration difference for '{audio_lang}' exceeds limit ({diff:.2f}s > {limit_duration_diff}s). This track will be included with -shortest, but consider fixing the source files.")
             use_shortest = True
+
+        if reference_audio is None:
+            reference_audio = audio_path
+            audio_track['_offset_sec'] = 0.0
+            logger.info(f"Audio offset reference track: {audio_lang}")
+        else:
+            offset = detect_audio_offset(reference_audio, audio_path)
+            if offset is None:
+                logger.warning(f"Offset detection failed for '{audio_lang}'.")
+                audio_track['_offset_sec'] = 0.0
+            else:
+                audio_track['_offset_sec'] = offset
+                if abs(offset) >= 0.05:
+                    direction = "Early" if offset > 0 else "Late"
+                    console.print(f'[yellow]    OFFSET [cyan]{audio_lang}: [red]{offset:+.3f}s [cyan]({direction})')
 
     if MUX_ENGINE == "mkvmerge":
         result = _join_audios_mkvmerge(video_path, audio_tracks, out_path)
@@ -441,9 +459,22 @@ def join_audios(video_path: str, audio_tracks: List[Dict[str, str]], out_path: s
     ffmpeg_cmd.extend(['-i', video_path])
 
     for audio_track in audio_tracks:
+        audio_path  = audio_track.get('path')
+        offset_sec  = audio_track.get('_offset_sec', 0.0)
+        _OFFSET_THR = 0.05
+
         if is_mpegts_file(audio_track.get('path', '')):
             ffmpeg_cmd.extend(['-f', 'mpegts'])
-        ffmpeg_cmd.extend(['-i', audio_track.get('path')])
+
+        if offset_sec > _OFFSET_THR:
+            ffmpeg_cmd.extend(['-itsoffset', f'{offset_sec:.3f}'])
+            logger.info(f"Applying -itsoffset {offset_sec:.3f} to '{audio_track.get('name')}'")
+        elif offset_sec < -_OFFSET_THR:
+            ss_val = abs(offset_sec)
+            ffmpeg_cmd.extend(['-ss', f'{ss_val:.3f}'])
+            logger.info(f"Applying -ss {ss_val:.3f} to '{audio_track.get('name')}'")
+
+        ffmpeg_cmd.extend(['-i', audio_path])
 
     ffmpeg_cmd.extend(['-map', '0:v'])
     for i in range(1, len(audio_tracks) + 1):

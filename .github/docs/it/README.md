@@ -1,13 +1,10 @@
 <div align="center">
 
-[![PyPI Version](https://img.shields.io/pypi/v/vibravid?logo=pypi&logoColor=white&labelColor=2d3748&color=3182ce&style=for-the-badge)](https://pypi.org/project/vibravid/)
 [![Sponsor](https://img.shields.io/badge/💖_Sponsor-ea4aaa?style=for-the-badge&logo=github-sponsors&logoColor=white&labelColor=2d3748)](https://ko-fi.com/arrowar)
 
 [![Windows](https://img.shields.io/badge/🪟_Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_win_2025_x64.exe)
 [![macOS](https://img.shields.io/badge/🍎_macOS-000000?style=for-the-badge&logo=apple&logoColor=white&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_mac_15_x64)
 [![Linux](https://img.shields.io/badge/🐧_Linux_latest-FCC624?style=for-the-badge&logo=linux&logoColor=black&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_linux_24_04_x64)
-
-_⚡ **Avvio rapido:** `pip install VibraVid && VibraVid`_
 
 **🌍 Language / Lingua**
 
@@ -38,21 +35,7 @@ _⚡ **Avvio rapido:** `pip install VibraVid && VibraVid`_
 
 ## Installazione
 
-### Opzione 1 — PyPI (consigliata)
-
-```bash
-pip install VibraVid
-VibraVid
-```
-
-### Opzione 2 — uv
-
-```bash
-uv tool install VibraVid
-VibraVid
-```
-
-### Opzione 3 — Clone manuale
+### Opzione 1 — Clone manuale
 
 ```bash
 git clone https://github.com/AstraeLabs/VibraVid.git
@@ -75,13 +58,13 @@ uv run manual.py     # avvia
 uv sync --upgrade    # aggiorna dipendenze
 ```
 
-### Opzione 4 — Unraid
+### Opzione 2 — Unraid
 
 ```
 Puoi trovare l'applicazione nella Community Application
 ```
 
-### Opzione 5 — Android/Termux (automatica)
+### Opzione 3 — Android/Termux (automatica)
 
 > [!IMPORTANT]
 > Questo script richiede **Termux**. **NON** installare Termux dal Google Play Store, poiché quella versione è obsoleta e abbandonata a causa delle restrizioni di sicurezza di Android. Scarica invece l'ultima versione ufficiale da:
@@ -110,10 +93,6 @@ vibravid
 ## Avvio rapido
 
 ```bash
-# Installazione PyPI o uv
-VibraVid
-
-# Clone manuale
 python manual.py
 ```
 
@@ -127,23 +106,23 @@ python manual.py
 VibraVid -UP
 ```
 
-### PyPI
-
-```bash
-pip install VibraVid --upgrade
-```
-
-### uv
-
-```bash
-uv tool upgrade VibraVid
-```
-
 ### Clone manuale
 
 ```bash
 git fetch origin
 git reset --hard origin/main
+```
+
+Poi aggiorna le dipendenze:
+
+**pip:**
+```bash
+pip install -r requirements.txt --upgrade
+```
+
+**uv:**
+```bash
+uv sync --upgrade
 ```
 
 > Se la cartella non è ancora un repository Git inizializzato:
@@ -163,7 +142,7 @@ git reset --hard origin/main
 | **HLS**  | HTTP Live Streaming (m3u8)         | [Vedi esempio](../../Test/Downloads/HLS.py)  |
 | **MP4**  | Download diretto MP4               | [Vedi esempio](../../Test/Downloads/MP4.py)  |
 | **DASH** | MPEG-DASH con bypass DRM\*         | [Vedi esempio](../../Test/Downloads/DASH.py) |
-| **ISM** | Smooth Streaming com DRM \*         | [View example](./Test/Downloads/ISM.py) |
+| **ISM** | Smooth Streaming con bypass DRM\*  | [Vedi esempio](../../Test/Downloads/ISM.py) |
 
 > **\*DASH con bypass DRM:** Richiede un CDM (Content Decryption Module) valido L3\L2\L1\SL3000\SL2000. Questo progetto non fornisce né facilita l'ottenimento di CDM. Gli utenti devono assicurarsi di rispettare le leggi vigenti.
 
@@ -364,6 +343,17 @@ S%(season:02d)/     →  cartella stagione  S01/
 | `"ita_forced"` | Lingua con flag (`forced`, `cc`, `sdh`) |
 | `"ita_forced\|eng_cc"` | Più lingue con flag |
 | `"false"` | Salta sottotitoli |
+
+**Companion Dolby Vision (solo `select_video`):**
+
+Aggiungi `&dv=<qualità>` al filtro video per scaricare anche una companion Dolby Vision insieme al video principale (non-DV). `<qualità>` è `best`/`worst` (default `worst`):
+
+| Valore | Descrizione |
+|--------|-------------|
+| `"best&dv"` | Miglior video non-DV + companion DV alla qualità peggiore |
+| `"1080&dv=best"` | Video principale 1080p + companion DV alla qualità migliore |
+
+La traccia DV viene muxata come traccia video aggiuntiva tramite mkvmerge.
 
 ---
 

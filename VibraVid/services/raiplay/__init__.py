@@ -1,5 +1,7 @@
 # 21.05.24
 
+import concurrent.futures
+
 from rich.console import Console
 from rich.prompt import Prompt
 
@@ -18,6 +20,25 @@ msg = Prompt()
 console = Console()
 entries_manager = EntriesManager()
 table_show_manager = TVShowManager()
+
+DETECT_MEDIA_TYPE = True
+
+def _detect_media_type(path_id: str) -> str:
+    """Return 'movie' or 'tv' from RaiPlay program typology. Defaults to 'tv' on any error."""
+    try:
+        url = f"https://www.raiplay.it/{path_id.lstrip('/')}"
+        client = create_client(headers=get_headers())
+        response = client.get(url)
+        client.close()
+
+        if response.status_code != 200:
+            return 'tv'
+        
+        data = response.json()
+        typology = ((data.get('program_info', {}) or {}).get('typology') or (data.get('track_info', {}) or {}).get('typology') or '')
+        return 'movie' if str(typology).strip().lower() == 'film' else 'tv'
+    except Exception:
+        return 'tv'
 
 
 def title_search(query: str) -> int:
@@ -66,7 +87,6 @@ def title_search(query: str) -> int:
         
         # Limit to only 15 results for performance
         data = cards[:15]
-        console.print(f"[cyan]Found {len(cards)} results, processing first {len(data)}...")
         
     except Exception as e:
         console.print(f"[red]Error parsing search results: {e}")
@@ -104,7 +124,18 @@ def title_search(query: str) -> int:
         except Exception as e:
             console.print(f"[red]Error processing item '{item.get('titolo', 'Unknown')}': {e}")
             continue
-    
+
+    if DETECT_MEDIA_TYPE:
+        entries = [e for e in entries_manager.media_list if getattr(e, 'path_id', None)]
+        if entries:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                future_map = {executor.submit(_detect_media_type, e.path_id): e for e in entries}
+                for future in concurrent.futures.as_completed(future_map):
+                    try:
+                        future_map[future].type = future.result()
+                    except Exception:
+                        pass
+
     return len(entries_manager)
 
 def process_search_result(select_title, selections=None, scrape_serie=None):

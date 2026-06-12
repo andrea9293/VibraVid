@@ -47,6 +47,17 @@ def fix_manifest_url(manifest_url: str) -> str:
     
     return manifest_url
 
+def _extract_film_content_id(first_item_url: str) -> str:
+    """Extract the relinker content id (used for the Widevine license) from a film ContentItem JSON."""
+    client = create_client(headers=get_headers())
+    response = client.get(first_item_url)
+    client.close()
+    response.raise_for_status()
+
+    content_url = (response.json().get("video", {}) or {}).get("content_url", "") or ""
+    return content_url.split("=")[1] if "=" in content_url else ""
+
+
 def download_film(select_title: Entries) -> Tuple[str, bool]:
     """
     Downloads a film using the provided Entries information.
@@ -54,7 +65,7 @@ def download_film(select_title: Entries) -> Tuple[str, bool]:
     start_message()
     console.print(f"\n[yellow]Download: [red]{site_constants.SITE_NAME} → [cyan]{select_title.name} \n")
 
-    # Extract m3u8 URL from the film's URL
+    # Resolve the film's video ContentItem and extract the master playlist
     client = create_client(headers=get_headers())
     response = client.get(select_title.url + ".json")
     client.close()
@@ -68,11 +79,27 @@ def download_film(select_title: Entries) -> Tuple[str, bool]:
 
     # HLS
     if ".mpd" not in master_playlist:
-        return HLS_Downloader(m3u8_url=fix_manifest_url(master_playlist), license_url=generate_license_url(select_title.mpd_id), output_path=os.path.join(movie_path, movie_name)).start()
+        return HLS_Downloader(
+            m3u8_url=fix_manifest_url(master_playlist),
+            license_url=generate_license_url(select_title.mpd_id),
+            output_path=os.path.join(movie_path, movie_name)
+        ).start()
 
     # MPD
     else:
-        return DASH_Downloader(mpd_url=master_playlist, license_url=generate_license_url(select_title.mpd_id), output_path=os.path.join(movie_path, movie_name)).start()
+        mpd_id = _extract_film_content_id(first_item_path)
+        full_license_url = generate_license_url(mpd_id)
+        license_headers = {
+            'nv-authorizations': full_license_url.split("?")[1].split("=")[1],
+            'user-agent': get_userAgent(),
+        }
+
+        return DASH_Downloader(
+            mpd_url=master_playlist,
+            license_url=full_license_url.split("?")[0],
+            license_headers=license_headers,
+            output_path=os.path.join(movie_path, movie_name),
+        ).start()
     
 
 def download_episode(obj_episode, index_season_selected, index_episode_selected, scrape_serie):

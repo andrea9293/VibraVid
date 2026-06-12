@@ -15,28 +15,44 @@ class VideoSource:
         self.csrf_token = csrf_token
         self.episode_data = episode_data
         self.number = episode_data.number
+        self.token = getattr(episode_data, 'token', '')
+        play_url = getattr(episode_data, 'play_url', '')
         self.link = site_url + episode_data.url
-        
+        referer = (site_url + play_url) if play_url else site_url
+
         # Create an HTTP client with session cookies, headers, and base URL.
         self.client = create_client(
             cookies={"sessionId": session_id},
-            headers={"User-Agent": get_userAgent(), "csrf-token": csrf_token},
+            headers={
+                "User-Agent": get_userAgent(),
+                "CSRF-Token": csrf_token,
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Origin": site_url,
+                "Referer": referer,
+            },
             follow_redirects=True
         )
 
     def get_playlist(self):
-        """Fetch the download link from AnimeWorld using the episode link."""
+        """Fetch the direct MP4 URL from AnimeWorld via api/episode/info."""
         try:
-            # Make a POST request to the episode link and follow any redirects
-            res = self.client.post(self.link)
+            res = self.client.get(self.link, params={"id": self.token, "alt": "0"})
             data = res.json()
 
-            # Extract the first available server link and return it after modifying the URL
-            server_link = data["links"]["9"][list(data["links"]["9"].keys())[0]]["link"]
-            return server_link.replace('download-file.php?id=', '')
+            if data.get("error"):
+                logger.error(f"api/episode/info error for token={self.token}: {data}")
+                return None
+
+            grabber = data.get("grabber")
+            if grabber:
+                return grabber
+
+            logger.error(f"No grabber in response for token={self.token}: {data}")
+            return None
 
         except Exception as e:
-            logger.error(f"Error in new API system: {e}")
+            logger.error(f"Error fetching episode info: {e}")
             return None
 
     def close(self):

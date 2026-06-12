@@ -61,15 +61,16 @@
     },
     "HOOKS": {
         "pre_run": [],
-        "post_run": [],
-        "post_download": []
+        "pre_download": [],
+        "post_download": [],
+        "post_run": []
     },
     "DRM": {
         "use_cdm": true,
         "prefer_remote_cdm": false,
         "vault": {
             "supa": {
-                "url": "https://crqczuxpqjmrjvdvqvlx.supabase.co",
+                "url": "https://drm-db.server66.workers.dev",
                 "token": ""
             }
         }

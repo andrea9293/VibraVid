@@ -9,12 +9,13 @@ from rich.console import Console
 
 from VibraVid.utils import config_manager, os_manager
 from VibraVid.utils.http_client import get_headers
-from VibraVid.core.source.download_utils import parse_max_time as _parse_max_time
 from VibraVid.core.muxing.helper.video_hybrid import split_other_tracks
 from VibraVid.core.ui.tracker import download_tracker, context_tracker
 from VibraVid.core.utils.media_players import MediaPlayers
 
-from VibraVid.core.source.downloader import MediaDownloader
+from VibraVid.core.velora.downloader import MediaDownloader
+from VibraVid.core.velora.download_utils import parse_max_time as _parse_max_time
+
 from VibraVid.core.drm.manager import DRMManager
 from VibraVid.core.drm.system import DRMType, _DRMSystems
 from VibraVid.setup import get_wvd_path, get_prd_path
@@ -31,10 +32,10 @@ DELAY_SS = config_manager.config.get_int('DOWNLOAD', 'delay_after_download')
 
 
 class HLS_Downloader(BaseDownloader):
-    def __init__(self, m3u8_url: str, m3u8_content: Optional[str] = None, headers: Optional[Dict[str, str]] = None,
+    def __init__(self, m3u8_url: Optional[str] = None, m3u8_content: Optional[str] = None, headers: Optional[Dict[str, str]] = None,
         manifest_refresh_fn: Optional[Callable[[], Optional[str]]] = None,
         license_url: Optional[str] = None, license_headers: Optional[Dict[str, str]] = None, license_certificate: Optional[str] = None,
-        output_path: Optional[str] = None, drm_preference = _DRMSystems.WIDEVINE, key: Optional[str] = None,
+        output_path: Optional[str] = None, drm_preference = DRMType.WIDEVINE, key: Optional[str] = None,
         cookies: Optional[Dict[str, str]] = None, max_segments: Optional[int] = None, max_time=None,
         other_tracks: Optional[list] = None
     ):

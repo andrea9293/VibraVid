@@ -606,8 +606,6 @@ def make_pssh_widevine(kid_bytes: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 # Public entry: assemble the final init segment
 # ---------------------------------------------------------------------------
-
-
 def kid_hex_to_bytes(kid: str) -> bytes:
     """Accept the canonical CENC big-endian hex string used by ``DRMInfo.kid``."""
     cleaned = (kid or "").replace("-", "").replace("{", "").replace("}", "").lower()

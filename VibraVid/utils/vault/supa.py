@@ -18,8 +18,10 @@ TOKEN = db_config.get("supa", {}).get("token", "")
 
 class ExternalSupaDBVault:
     def __init__(self):
-        self.base_url = f"{VAULT_URL}/functions/v1"
+        self.base_url = VAULT_URL
         self.headers = {"Content-Type": "application/json"}
+        if TOKEN:
+            self.headers["Authorization"] = f"Bearer {TOKEN}"
         self.session = create_client(headers=self.headers, http2=True)
 
     def close(self):
@@ -147,7 +149,7 @@ class ExternalSupaDBVault:
             console.print(f"\n[red]{drm_type} [cyan](PSSH: [yellow]{pssh_display}[cyan])")
             for k in keys:
                 kid_val, key_val = k["kid_key"].split(":", 1)
-                console.print(f"    - [red]{kid_val}[white]:[green]{key_val} [cyan]| [#a855f7]supa")
+                console.print(f"    - [red]{kid_val}[white]:[green]{key_val} [cyan]| [#a855f7]claudio")
 
         return [k["kid_key"] for k in keys]
 
@@ -184,7 +186,7 @@ class ExternalSupaDBVault:
             console.print(f"\n[red]{drm_type} [cyan](PSSH: [yellow]{pssh_display}[cyan])")
             for k in keys:
                 kid_val, key_val = k["kid_key"].split(":", 1)
-                console.print(f"    - [red]{kid_val}[white]:[green]{key_val} [cyan]| [#a855f7]supa")
+                console.print(f"    - [red]{kid_val}[white]:[green]{key_val} [cyan]| [#a855f7]claudio")
 
         return [k["kid_key"] for k in keys]
 

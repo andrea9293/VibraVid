@@ -23,8 +23,8 @@ from VibraVid.core.ui.ui import build_table
 from VibraVid.core.utils.selector import StreamSelector, StreamSelectorFormatter
 from VibraVid.core.utils.language import resolve_locale, LANGUAGE_MAP
 from VibraVid.core.utils.stream_selector_ui import InteractiveStreamSelector
-from VibraVid.core.source.subtitle import build_ext_track_label, is_valid_format, ext_from_url, normalize_sub_filename
 from VibraVid.core.utils.codec import VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS, SUBTITLE_CODEC_MAP
+from VibraVid.core.velora.subtitle import build_ext_track_label, is_valid_format, ext_from_url, normalize_sub_filename
 from VibraVid.core.decryptor import KeysManager
 
 
@@ -166,7 +166,6 @@ class BaseMediaDownloader:
         url_lower = self.url.lower().split("?")[0]
         proto = self.manifest_protocol
         content = self.manifest_content
-        logger.info(f"Initial manifest info -- url={self.url!r}  protocol={proto!r}  content={'present' if content else 'none'}")
 
         if content and proto:
             effective = proto
@@ -277,7 +276,6 @@ class BaseMediaDownloader:
         s_cfg = f.get("subtitle") or config_manager.config.get("DOWNLOAD", "select_subtitle")
         selector = StreamSelector(v_cfg, a_cfg, s_cfg, formatter=StreamSelectorFormatter())
         self._sv, self._sa, self._ss = selector.apply(self.streams)
-        logger.info(f"Selection -> video={self._sv!r}  audio={self._sa!r}  subtitle={self._ss!r}")
 
     def _effective_filter(self, track_type: str) -> str:
         """Return the active selection filter for *track_type*, preferring custom_filters over config."""

@@ -8,8 +8,7 @@ from typing import Any, Dict, List, Tuple
 from VibraVid.utils.http_client import create_async_client, get_proxy_url
 from VibraVid.utils import config_manager
 from VibraVid.core.utils.language import resolve_locale
-from VibraVid.core.source.bridge import run_download_plan
-
+from VibraVid.core.velora.bridge import run_download_plan
 from VibraVid.core.utils.codec import SUBTITLE_EXTENSIONS, AUDIO_EXTENSIONS
 
 

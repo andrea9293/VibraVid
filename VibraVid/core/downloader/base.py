@@ -8,6 +8,7 @@ import logging
 import threading
 import subprocess
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from rich.console import Console
@@ -19,6 +20,7 @@ from VibraVid.core.muxing.helper.video import get_media_metadata
 from VibraVid.core.muxing.helper.audio import audio_ext_for_codec
 from VibraVid.setup import get_ffmpeg_path
 
+from VibraVid.core.velora._verify_decrypt import verify_decrypted_media
 from VibraVid.core.muxing.helper.video_hybrid import download_other_tracks
 from VibraVid.cli.run import execute_hooks
 
@@ -35,6 +37,36 @@ DEBUG_TRACK_JSON = config_manager.config.get_bool("DEFAULT", "debug_track_json")
 
 def get_last_downloader_error() -> Optional[str]:
     return LAST_DOWNLOADER_ERROR
+
+
+_tracks_json_file: Optional[Path] = None
+
+
+def _append_tracks_json(payload: dict) -> None:
+    """Append *payload* to a single timestamped JSON file under .cache/logs."""
+    global _tracks_json_file
+    try:
+        log_dir = Path(config_manager.base_path or ".") / ".cache" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        if _tracks_json_file is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            _tracks_json_file = log_dir / f"{timestamp}.json"
+
+        entries = []
+        if _tracks_json_file.exists():
+            try:
+                entries = json.loads(_tracks_json_file.read_text(encoding="utf-8"))
+                if not isinstance(entries, list):
+                    entries = []
+            except Exception:
+                entries = []
+
+        entries.append(payload)
+        _tracks_json_file.write_text(
+            json.dumps(entries, indent=4, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.error(f"Could not write TRACKS_JSON file: {e}")
 
 
 class BaseDownloader:
@@ -90,11 +122,8 @@ class BaseDownloader:
             return path.resolve().as_uri()
         return stripped
 
-    def _build_tracks_json(self, streams: list, keys: list, manifest_url: str) -> dict:
-        """Build a JSON-serializable dict of selected tracks only."""
-        videos = []
-        audios: Dict[str, list] = {}
-        subtitles: Dict[str, str] = {}
+    def _build_other_tracks(self) -> list:
+        """Return the normalized list of extra tracks attached to this download."""
         other_tracks = []
         for track in list(getattr(self, "other_tracks", []) or []):
             if not isinstance(track, dict):
@@ -106,81 +135,17 @@ class BaseDownloader:
             }
             if normalized_track["type"] and normalized_track["url"]:
                 other_tracks.append(normalized_track)
+        return other_tracks
 
-        def _to_mbps(value):
-            if value is None:
-                return None
-            try:
-                bps = float(value)
-            except (TypeError, ValueError):
-                return None
-            if bps <= 0:
-                return None
-            mbps = bps / 1_000_000
-            return f"{mbps:.3f}".rstrip("0").rstrip(".") + " Mbps"
-
-        for s in streams:
-            if not getattr(s, "selected", False):
-                continue
-            stype = getattr(s, "type", "") or ""
-
-            if stype == "video":
-                codec = s.get_short_codec() if hasattr(s, 'get_short_codec') else getattr(s, "codecs", None)
-                if not codec:
-                    codec = "H.264"
-                videos.append({
-                    "manifest_url": manifest_url,
-                    "quality": getattr(s, "resolution", None),
-                    "bitrate": _to_mbps(getattr(s, "bitrate", None)),
-                    "codec": codec,
-                })
-
-            elif stype == "audio":
-                audio_url = getattr(s, "playlist_url", None) or getattr(s, "url", None) or manifest_url
-                if audio_url == manifest_url:
-                    continue  # same manifest as video, skip
-                lang = (getattr(s, "language", None) or "und").strip()
-                codec = s.get_short_codec() if hasattr(s, 'get_short_codec') else getattr(s, "codecs", None)
-                if not codec:
-                    codec = "AAC"
-                audio_bitrate = _to_mbps(getattr(s, "bitrate", None))
-                if audio_bitrate is None:
-                    audio_bitrate = "128kbps"
-                entry = {
-                    "manifest_url": audio_url,
-                    "codec": codec,
-                    "bitrate": audio_bitrate,
-                }
-                audios.setdefault(lang, []).append(entry)
-
-            elif stype == "subtitle":
-                lang = getattr(s, "language", None) or "und"
-                name = getattr(s, "name", None) or lang
-                label = f"{lang} - {name}" if name and name != lang else lang
-                url = getattr(s, "playlist_url", None) or getattr(s, "url", None)
-                
-                if not url and manifest_url:
-                    url = manifest_url
-
-                if url == manifest_url:
-                    continue
-                
-                subtitles[label] = url
-
+    def _format_keys(self, keys: list) -> list:
+        """Return DRM keys formatted as ``kid:key`` strings."""
         formatted_keys = []
         for k in (keys or []):
             if isinstance(k, (list, tuple)) and len(k) == 2:
                 formatted_keys.append(f"{k[0]}:{k[1]}")
             else:
                 formatted_keys.append(str(k))
-
-        result = {"videos": videos}
-        if audios:
-            result["audios"] = audios
-        result["subtitles"] = subtitles
-        result["other_tracks"] = other_tracks
-        result["keys"] = formatted_keys
-        return result
+        return formatted_keys
 
     def track_download_start(self, title: str, media_type: str, site: str) -> None:
         """Fire-and-forget: notify Supabase that a download has started."""
@@ -206,8 +171,6 @@ class BaseDownloader:
 
     def _log_tracks_json(self, streams: list, keys: list, manifest_url: str) -> None:
         """Emit a TRACKS_JSON logger.info and trigger Supabase download tracking."""
-        tracks = self._build_tracks_json(streams, keys, manifest_url)
-
         # Read all metadata from context_tracker (populated by tv_download_manager / site_search_manager)
         season = context_tracker.season or 0
         episode = context_tracker.episode or 0
@@ -219,16 +182,21 @@ class BaseDownloader:
         title = context_tracker.title or self.filename_base
         site  = context_tracker.site_name or getattr(self, "site_name", "") or ""
 
+        # Build the display name: "<title> S<season>_E<episode> <episode name>" for TV.
+        name = title
+        if media_type == "TV":
+            name = f"{title} S{season}_E{episode}"
+            if episode_name:
+                name += f" {episode_name}"
+
         payload = {
-            "name": title,
-            "type": media_type.upper(),
-            "season": season,
-            "episode": episode,
-            "episode_name": episode_name,
-            "tracks": tracks,
+            "name": name,
+            "manifest": manifest_url,
+            "other_tracks": self._build_other_tracks(),
+            "keys": self._format_keys(keys),
         }
         if DEBUG_TRACK_JSON:
-            logger.info("TRACKS_JSON\n" + json.dumps(payload, indent=4, ensure_ascii=False))
+            _append_tracks_json(payload)
         self.track_download_start(title=title, media_type=media_type, site=site)
 
     def _no_media_downloaded(self, status: dict) -> bool:
@@ -540,6 +508,25 @@ class BaseDownloader:
             logger.warning(f"Audio remux error: {e}; falling back to raw move")
         shutil.move(src, os.path.splitext(dst)[0] + os.path.splitext(src)[1])
 
+    def _verify_output(self) -> None:
+        """
+        Post-mux sanity check: confirm the final file is playable and carries no residual encryption boxes.
+        """
+        try:
+            path = self.output_path
+            if not path or not os.path.exists(path) or os.path.getsize(path) == 0:
+                return
+
+            ok, message = verify_decrypted_media(path)
+            if ok:
+                logger.info(f"Output verification OK for {os.path.basename(path)}: {message}")
+                return
+
+            logger.error(f"Output verification FAILED for {os.path.basename(path)}: {message}")
+            console.print(f"[red]Output verification FAILED for {os.path.basename(path)}: {message}[/red]")
+        except Exception as exc:
+            logger.warning(f"Output verification skipped due to error: {exc}")
+
     def _finalize(self, *, final_file: str) -> None:
         """Common tail for start(): move to final location."""
         if final_file and os.path.exists(final_file):
@@ -593,6 +580,7 @@ class BaseDownloader:
 
         self._move_copied_subtitles()
         self._move_copied_audios()
+        self._verify_output()
 
         if self.download_id:
             download_tracker.complete_download(self.download_id, success=True, path=os.path.abspath(self.output_path))

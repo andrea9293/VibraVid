@@ -9,12 +9,13 @@ from rich.console import Console
 
 from VibraVid.utils import config_manager, os_manager
 from VibraVid.utils.http_client import get_headers
-from VibraVid.core.source.download_utils import parse_max_time as _parse_max_time
 from VibraVid.setup import get_wvd_path, get_prd_path
 from VibraVid.core.ui.tracker import download_tracker, context_tracker
 from VibraVid.core.utils.media_players import MediaPlayers
 
-from VibraVid.core.source.downloader import MediaDownloader
+from VibraVid.core.velora.download_utils import parse_max_time as _parse_max_time
+from VibraVid.core.velora.downloader import MediaDownloader
+
 from VibraVid.core.drm.manager import DRMManager
 from VibraVid.core.drm.system import DRMType
 from VibraVid.core.manifest.ism import ISMParser
@@ -32,7 +33,7 @@ DELAY_SS = config_manager.config.get_int("DOWNLOAD", "delay_after_download")
 
 
 class ISM_Downloader(BaseDownloader):
-    def __init__(self, ism_url: str, ism_content: Optional[str] = None, headers: Optional[Dict[str, str]] = None, 
+    def __init__(self, ism_url: Optional[str] = None, ism_content: Optional[str] = None, headers: Optional[Dict[str, str]] = None,
         manifest_refresh_fn: Optional[Callable[[], Optional[str]]] = None,
         license_url: Optional[str] = None, license_headers: Optional[Dict[str, str]] = None, license_certificate: Optional[str] = None,
         output_path: Optional[str] = None, drm_preference = DRMType.PLAYREADY, key: Optional[str] = None, cookies: Optional[Dict[str, str]] = None,

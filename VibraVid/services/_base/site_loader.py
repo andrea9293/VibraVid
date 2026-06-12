@@ -6,6 +6,7 @@ import glob
 import logging
 import importlib
 import importlib.util
+import contextvars
 from typing import Dict
 
 from rich.console import Console
@@ -19,6 +20,8 @@ console = Console()
 logger = logging.getLogger(__name__)
 folder_name = "services"
 imp_sources = config_manager.config.get_list("DEFAULT", "imp_service")
+KNOWN_CONTENT_TYPES = ("Anime", "Film_Serie", "Serie", "Song")
+current_site_var: "contextvars.ContextVar[str | None]" = contextvars.ContextVar("vibravid_current_site", default=None)
 
 
 class LazySearchModule:
@@ -105,7 +108,12 @@ class LazySearchModule:
             Result from the search function
         """
         self._load_module()
-        return self._search_func(*args, **kwargs)
+        token = current_site_var.set(self.module_name)
+        
+        try:
+            return self._search_func(*args, **kwargs)
+        finally:
+            current_site_var.reset(token)
     
     @property
     def use_for(self):
@@ -212,7 +220,11 @@ def load_search_functions() -> Dict[str, LazySearchModule]:
                     logger.error(f"Module '{module_name}' from source '{source}': Missing or invalid '_useFor' declaration")
                     console.print(f"[red]Error: Module '{module_name}' is missing '_useFor' declaration[/red]")
                     continue
-                
+
+                if use_for not in KNOWN_CONTENT_TYPES:
+                    logger.warning(f"Module '{module_name}': unknown _useFor='{use_for}' (expected one of {', '.join(KNOWN_CONTENT_TYPES)})")
+                    console.print(f"[yellow]Warning: Module '{module_name}' declares unknown _useFor='{use_for}' (expected: {', '.join(KNOWN_CONTENT_TYPES)})[/yellow]")
+
                 source_modules.append((module_name, indice, use_for, source, base_path))
                 loaded_module_names.add(module_name)
                 logger.debug(f"Found module '{module_name}' from source '{source}': use_for={use_for}, indice={indice}")

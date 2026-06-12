@@ -660,6 +660,7 @@ class DashParser:
     def _resolve_base_url(self) -> None:
         if self._root is None:
             return
+        
         base_el = self._root.find("mpd:BaseURL", _NS)
         if base_el is not None and base_el.text and base_el.text.strip():
             candidate = base_el.text.strip()
@@ -669,7 +670,6 @@ class DashParser:
                 self._base_url = urljoin(self._base_url, candidate)
                 if not self._base_url.endswith("/"):
                     self._base_url += "/"
-        logger.info(f"DashParser: effective base URL = {self._base_url}")
 
     @staticmethod
     def _resolve_element_base_url(element, parent_base: str) -> str:

@@ -6,6 +6,7 @@ import os
 import queue
 import re
 import shutil
+import struct
 import threading
 import time
 from pathlib import Path
@@ -18,17 +19,19 @@ from VibraVid.core.ui.tracker import download_tracker
 from VibraVid.core.ui.bar_manager import DownloadBarManager, console
 from VibraVid.core.decryptor import Decryptor, KeysManager
 from VibraVid.core.muxing.helper.video import binary_merge_segments
-from VibraVid.core.source.bridge import run_download_plan
-from VibraVid.core.source._ism_init import build_ism_init_segment, ISM_TIMESCALE
-from VibraVid.core.source._verify_decrypt import verify_decrypted_media
-from VibraVid.core.source.download_utils import (
+from VibraVid.setup import get_bento4_decrypt_path
+
+from VibraVid.core.velora.bridge import run_download_plan
+from VibraVid.core.velora.subtitle import download_external_tracks_with_progress
+from VibraVid.core.velora._ism_init import build_ism_init_segment, ISM_TIMESCALE
+from VibraVid.core.velora._verify_decrypt import verify_decrypted_media
+from VibraVid.core.velora.download_utils import (
     normalize_path_key,
     format_size   as _fmt_size,
     format_speed  as _fmt_speed,
     estimate_total_size as _estimate_total_size,
     fmt_dur as _fmt_dur,
 )
-from VibraVid.setup import get_bento4_decrypt_path
 
 from .base import BaseMediaDownloader
 from ._hls_utils import hls_base_url, parse_hls_variant_playlist
@@ -130,7 +133,6 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                 def _run_externals() -> None:
                     asyncio.set_event_loop(ext_loop)
                     try:
-                        from VibraVid.core.source.subtitle import download_external_tracks_with_progress
                         subs, auds = ext_loop.run_until_complete(
                             download_external_tracks_with_progress(
                                 self.headers,
@@ -617,6 +619,47 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
 
         raise ValueError(f"Unsupported ISM stream type: {stream.type!r}")
 
+    @staticmethod
+    def _normalize_ism_fragment_sdi(data: bytes) -> bytes:
+        """Force ``tfhd.sample_description_index`` to 1 in every fragment."""
+        buf = bytearray(data)
+
+        def _iter(start: int, end: int):
+            off = start
+            while off + 8 <= end:
+                size = struct.unpack(">I", buf[off:off + 4])[0]
+                typ = bytes(buf[off + 4:off + 8])
+                hdr = 8
+                if size == 1:
+                    size = struct.unpack(">Q", buf[off + 8:off + 16])[0]
+                    hdr = 16
+                elif size == 0:
+                    size = end - off
+                if size < hdr or off + size > end:
+                    return
+                yield off, size, typ, hdr
+                off += size
+
+        for moof_off, moof_size, moof_typ, moof_hdr in _iter(0, len(buf)):
+            if moof_typ != b"moof":
+                continue
+            for traf_off, traf_size, traf_typ, traf_hdr in _iter(moof_off + moof_hdr, moof_off + moof_size):
+                if traf_typ != b"traf":
+                    continue
+                for tf_off, tf_size, tf_typ, tf_hdr in _iter(traf_off + traf_hdr, traf_off + traf_size):
+                    if tf_typ != b"tfhd":
+                        continue
+                    p = tf_off + tf_hdr
+                    flags = struct.unpack(">I", buf[p:p + 4])[0] & 0xFFFFFF
+                    q = p + 4 + 4  # skip version/flags + track_ID
+                    if flags & 0x000001:  # base-data-offset-present
+                        q += 8
+                    if flags & 0x000002:  # sample-description-index-present
+                        if struct.unpack(">I", buf[q:q + 4])[0] != 1:
+                            struct.pack_into(">I", buf, q, 1)
+        
+        return bytes(buf)
+
     def _ism_postproc(self, seg_paths: List[Path], out_path: Path, stream, bar_manager, task_key: str, total: int) -> bool:
         audio_codec = (getattr(stream, "codecs", "") or "").lower()
         codec_private_optional = audio_codec in ("ec-3", "eac3", "ac-3", "ac3")
@@ -646,7 +689,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             with open(encrypted_temp, "wb") as out:
                 out.write(init_data)
                 for seg_path, _ in valid_segs:
-                    out.write(seg_path.read_bytes())
+                    out.write(self._normalize_ism_fragment_sdi(seg_path.read_bytes()))
         except Exception as exc:
             logger.error(f"Creazione file unificato ISM fallita: {exc}")
             return False
@@ -1089,7 +1132,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             
             try:
                 from VibraVid.setup import get_ffprobe_path
-                from VibraVid.core.muxing.util.info import Mediainfo
+                from VibraVid.core.muxing.helper.info import Mediainfo
                 ffprobe_path = get_ffprobe_path()
                 asyncio.run(Mediainfo.from_file_async(ffprobe_path, str(target_path)))
             except Exception as exc:
@@ -1124,9 +1167,10 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             if getattr(stream, "is_wvtt_mp4", False):
                 base = f"{self.filename}.{lang}.wvtt"
             else:
-                sub_ext = (stream.format or ext or "vtt").lower().strip()
-                if sub_ext in ("dash", "mp4", "m4s", ""):
-                    sub_ext = "vtt"
+                _protocols = ("dash", "hls", "mp4", "m4s", "")
+                fmt = (stream.format or "").lower().strip()
+                seg = (ext or "").lower().strip()
+                sub_ext = fmt if fmt not in _protocols else (seg if seg not in _protocols else "vtt")
                 base = f"{self.filename}.{lang}.{sub_ext}"
 
             with self._assigned_sub_lock:

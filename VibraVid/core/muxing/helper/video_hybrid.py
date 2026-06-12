@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from VibraVid.core.muxing.hybrid import probe_media_file
-from VibraVid.core.source.downloader import MediaDownloader as ManualMediaDownloader
+from VibraVid.core.velora.downloader import MediaDownloader as ManualMediaDownloader
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ def split_other_tracks(other_tracks: Optional[List[Dict[str, Any]]]) -> tuple[Li
     video_tracks: List[Dict[str, Any]] = []
     audio_tracks: List[Dict[str, Any]] = []
     subtitle_tracks: List[Dict[str, Any]] = []
+
     for raw_track in other_tracks or []:
         track = dict(raw_track or {})
         kind, _tag = _split_track_type(track.get("type", ""))
@@ -51,14 +52,14 @@ def split_other_tracks(other_tracks: Optional[List[Dict[str, Any]]]) -> tuple[Li
             audio_tracks.append(track)
         elif kind == "subtitle":
             subtitle_tracks.append(track)
+    
     return video_tracks, audio_tracks, subtitle_tracks
 
 
 def _kind_to_filters(_kind: str, _tag: str, quality: str = "worst") -> Dict[str, str]:
     if _tag == "dv":
-        # Constrain to actual DV-codec streams (dvh1/dvhe prefix) so that "worst" cannot
-        # accidentally pick a lower-bitrate H.265 PQ stream from the same manifest.
         q = (quality or "worst").strip().lower()
+
         if q in ("best", "worst"):
             video_filter = f"codecs=dvh:for={q}"
         elif re.match(r"^\d+$", q):
@@ -72,7 +73,9 @@ def _kind_to_filters(_kind: str, _tag: str, quality: str = "worst") -> Dict[str,
                 video_filter = quality
         else:
             video_filter = quality
+        
         return {"video": video_filter, "audio": "false", "subtitle": "false"}
+    
     return {"video": quality or "worst", "audio": "false", "subtitle": "false"}
 
 
@@ -103,6 +106,7 @@ def _pick_status_entry(status: Dict[str, Any], kind: str) -> Optional[Dict[str, 
     if kind == "subtitle":
         subtitles = status.get("subtitles") or status.get("external_subtitles") or []
         return subtitles[0] if subtitles else None
+    
     return None
 
 
@@ -167,6 +171,7 @@ def download_other_tracks(
         try:
             downloader.parse_stream(show_table=False)
             if kind == "video" and tag:
+                
                 # Set resolution to the tag label so _prepare_labels shows "Vid DV"
                 tag_up = _safe_token(tag, tag).upper()
                 for s in downloader.streams:

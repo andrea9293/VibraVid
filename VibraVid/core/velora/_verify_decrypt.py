@@ -1,20 +1,18 @@
 # 05.05.26
 
 import logging
-import os
-import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
+
+from VibraVid.utils.os import os_manager
+from VibraVid.setup import get_ffprobe_path
+from VibraVid.setup import get_mp4dump_path
+
 
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve(path_or_name: str) -> Optional[str]:
-    if os.path.isabs(path_or_name) and os.path.isfile(path_or_name):
-        return path_or_name
-    return shutil.which(path_or_name)
+_MP4DUMP_SCAN_BYTES = 1 * 1024 * 1024  # 1 MB
 
 
 def _ffprobe_streams(ffprobe: str, file_path: str) -> Tuple[bool, str]:
@@ -76,14 +74,16 @@ def _mp4dump_clean(mp4dump: str, file_path: str) -> Tuple[bool, str]:
     Best-effort encryption-residue scan with Bento4's mp4dump.
     """
     try:
-        result = subprocess.run(
-            [mp4dump, "--verbosity", "0", file_path],
-            capture_output=True,
-            timeout=30,
-        )
-    
-    except subprocess.TimeoutExpired:
-        return True, "mp4dump timed out (skipped)"
+        with open(file_path, "rb") as fh:
+            head = fh.read(_MP4DUMP_SCAN_BYTES)
+
+        with os_manager.temp_binary_file(head, suffix=".mp4") as tmp_path:
+            result = subprocess.run(
+                [mp4dump, "--verbosity", "0", tmp_path],
+                capture_output=True,
+                timeout=5,
+            )
+
     except Exception as exc:
         return True, f"mp4dump failed to launch: {exc} (skipped)"
 
@@ -110,7 +110,6 @@ def _mp4dump_clean(mp4dump: str, file_path: str) -> Tuple[bool, str]:
     return True, "no residual encryption boxes"
 
 
-
 def _scan_mp4_boxes_for_encryption(file_path: str, max_bytes: int = 4 * 1024 * 1024) -> Tuple[bool, str]:
     """
     Lightweight, dependency-free scan: read up to *max_bytes* of the file and
@@ -133,24 +132,20 @@ def _scan_mp4_boxes_for_encryption(file_path: str, max_bytes: int = 4 * 1024 * 1
     while pos + 8 <= end:
         size = int.from_bytes(data[pos:pos + 4], "big")
         type_ = data[pos + 4:pos + 8]
+        
         if size == 1:
             if pos + 16 > end:
                 break
             size = int.from_bytes(data[pos + 8:pos + 16], "big")
+        
         if size <= 0:
-            # malformed/streaming variant -> stop, don't false-flag
             break
+
         if type_ in encryption_types:
             found.add(type_.decode("ascii"))
 
-        # heuristic: also scan inside container boxes by sliding 1 byte
-        # if we are inside moov/trak/mdia/minf/stbl. For the simple top-level
-        # walk we step by ``size``.
         pos += size
 
-    # Fallback: if we didn't enter container traversal, also do a substring
-    # scan of the first window — boxes' 4-cc are unique enough that false
-    # positives are negligible for these short tags.
     if not found:
         for marker in encryption_types:
             if marker in data:
@@ -161,40 +156,20 @@ def _scan_mp4_boxes_for_encryption(file_path: str, max_bytes: int = 4 * 1024 * 1
     return True, "no residual encryption boxes (built-in scan)"
 
 
-def verify_decrypted_media(file_path, *, ffprobe_path: Optional[str] = None, mp4dump_path: Optional[str] = None) -> Tuple[bool, str]:
+def verify_decrypted_media(file_path) -> Tuple[bool, str]:
     """
     Verify that *file_path* is a playable, fully decrypted media file.
     """
     p = Path(file_path)
     if not p.exists():
         return False, "output file missing"
+    
     if p.stat().st_size == 0:
         return False, "output file is empty"
 
-    # Resolve binaries lazily — keep this module free of project-wide imports.
-    if ffprobe_path is None:
-        try:
-            from VibraVid.setup import get_ffprobe_path
-
-            ffprobe_path = get_ffprobe_path() or _resolve("ffprobe")
-        except Exception:
-            ffprobe_path = _resolve("ffprobe")
-    else:
-        ffprobe_path = _resolve(ffprobe_path)
-
-    if mp4dump_path is None:
-        try:
-            from VibraVid.setup import get_mp4dump_path
-
-            mp4dump_path = get_mp4dump_path() or _resolve("mp4dump")
-        except Exception:
-            mp4dump_path = _resolve("mp4dump")
-    else:
-        mp4dump_path = _resolve(mp4dump_path)
-
-    if not ffprobe_path:
-        logger.warning("ffprobe not available; skipping codec-level verification")
-        return True, "skipped (ffprobe missing)"
+        
+    ffprobe_path = get_ffprobe_path()
+    mp4dump_path = get_mp4dump_path()
 
     ok, ffprobe_msg = _ffprobe_streams(ffprobe_path, str(p))
     if not ok:
@@ -208,10 +183,10 @@ def verify_decrypted_media(file_path, *, ffprobe_path: Optional[str] = None, mp4
         if "skipped" not in mp4dump_msg:
             return True, f"{ffprobe_msg}; {mp4dump_msg}"
 
-    # Fallback: built-in box scanner — runs even when Bento4 mp4dump is
-    # absent or shadowed by an unrelated binary on PATH.
+    # Fallback: built-in box scanner
     clean, scan_msg = _scan_mp4_boxes_for_encryption(str(p))
     if not clean:
         return False, f"{ffprobe_msg}; {scan_msg}"
+    
     detail = scan_msg if not mp4dump_msg else f"{mp4dump_msg}; {scan_msg}"
     return True, f"{ffprobe_msg}; {detail}"

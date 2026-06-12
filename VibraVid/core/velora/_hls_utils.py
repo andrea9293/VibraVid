@@ -80,9 +80,7 @@ def parse_hls_variant_playlist(content: str, base_url: str) -> Tuple[List[Dict],
     return segments, init_url
 
 def parse_hls_live_playlist(content: str, base_url: str) -> Tuple[List[Dict], Optional[str], int, int, bool]:
-    """
-    Parse a live HLS playlist and return all relevant scheduling metadata.
-    """
+    """Parse a live HLS playlist and return all relevant scheduling metadata."""
     segments, init_url = parse_hls_variant_playlist(content, base_url)
 
     td_m = re.search(r"#EXT-X-TARGETDURATION:(\d+)", content)

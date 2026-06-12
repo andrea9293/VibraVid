@@ -96,9 +96,7 @@ def collect_failed_segments(dl_segs: list, downloaded_paths: list, stream_dir, d
 
 
 def print_failed_segments_report(failed_by_stream: list) -> None:
-    """
-    Print a summary of all failed segments after all progress bars are gone.
-    """
+    """Print a summary of all failed segments after all progress bars are gone."""
     if not failed_by_stream:
         return
 

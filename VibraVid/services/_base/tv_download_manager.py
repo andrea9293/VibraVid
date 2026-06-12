@@ -46,7 +46,6 @@ def process_season_selection(scrape_serie: Any, seasons_count: int, season_selec
         - episode_selection (str, optional): Pre-defined episode selection
         - download_episode_callback (Callable): Function to call for downloading episodes
     """
-    logger.info(f"Processing season selection with seasons_count={seasons_count}, season_selection={season_selection}, episode_selection={episode_selection}")
     if seasons_count == 0:
         console.print("[red]No seasons found for this series")
         return
@@ -82,20 +81,23 @@ def process_season_selection(scrape_serie: Any, seasons_count: int, season_selec
             else:
                 console.print(f"[yellow]Warning: Selection {val} is neither a valid index nor a valid season number.")
     else:
-        # Pre-selected mode (from GUI/CLI) - treat as season numbers directly
+        # Pre-selected mode (from GUI/CLI) - accept a 1-based index (position in the displayed list) first, then fall back to matching an actual season number.
         for val in index_season_selected.split(','):
             val = val.strip()
             try:
-                season_num = int(val)
-                if season_num in available_numbers:
-                    list_season_select.append(season_num)
-                else:
-                    console.print(f"[yellow]Warning: Season {season_num} is not available. Available: {available_numbers}")
+                num = int(val)
             except ValueError:
                 console.print(f"[yellow]Warning: '{val}' is not a valid season number.")
+                continue
+
+            if 1 <= num <= len(seasons_list):
+                list_season_select.append(seasons_list[num - 1].number)
+            elif num in available_numbers:
+                list_season_select.append(num)
+            else:
+                console.print(f"[yellow]Warning: Season {num} is not available. Available: {available_numbers}")
 
     if not list_season_select:
-        console.print(f"[red]No valid seasons selected. Available indices: 1-{len(seasons_list)}, Available numbers: {available_numbers}")
         if is_manual_input:
             list_season_select = validate_selection(list_selection, available_numbers)
         else:
@@ -135,9 +137,6 @@ def process_episode_download(index_season_selected: int, scrape_serie: Any, down
         - download_all (bool): Whether to download all episodes
         - episode_selection (str, optional): Pre-defined episode selection
     """
-    logger.info(f"Processing episode download for season {index_season_selected} with download_all={download_all} and episode_selection={episode_selection}")
-    
-    # Get episodes for the selected season
     episodes = scrape_serie.getEpisodeSeasons(index_season_selected)
     episodes_count = len(episodes)
     

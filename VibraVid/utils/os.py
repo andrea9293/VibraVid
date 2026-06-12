@@ -3,6 +3,9 @@
 import os
 import shutil
 import logging
+import tempfile
+from contextlib import contextmanager
+from typing import Iterator
 
 from unidecode import unidecode
 from rich.console import Console
@@ -138,6 +141,23 @@ class OsManager:
         except Exception as e:
             logger.error(f"Path creation error: {e}")
             return False
+
+    @staticmethod
+    @contextmanager
+    def temp_binary_file(data: bytes, suffix: str = "") -> Iterator[str]:
+        """Write *data* to a temporary file, yield its path, delete it on exit."""
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+            yield tmp_path
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
     def remove_folder(self, folder_path: str) -> bool:
         """

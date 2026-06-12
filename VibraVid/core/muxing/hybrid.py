@@ -9,8 +9,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from rich.console import Console
 
-from VibraVid.core.muxing.util.info import Mediainfo
-from VibraVid.core.muxing.helper.video import get_media_metadata
+from VibraVid.core.muxing.helper.info import Mediainfo
+from VibraVid.core.muxing.helper.video import get_media_metadata, is_mpegts_file
 from VibraVid.setup import get_dovi_tool_path, get_ffmpeg_path, get_ffprobe_path, get_mkvmerge_path
 from VibraVid.core.decryptor._subprocess_runner import run_with_progress
 
@@ -179,16 +179,20 @@ def _dv_mp4_to_annexb(input_path: Path, output_path: Path) -> bool:
 
 
 def _strip_enca(input_path: Path, output_path: Path) -> bool:
-    """Re-mux an audio track through ffmpeg to strip residual enca/encv wrapper boxes."""
-    cmd = [
-        get_ffmpeg_path(),
-        "-y",
-        "-i", str(input_path),
-        "-map", "0:a",
-        "-c:a", "copy",
-        str(output_path),
-    ]
-    return _run_command(cmd, f"ffmpeg strip-enca {input_path.name}")
+    """Re-mux an audio track through ffmpeg"""
+    def _run(force_ts: bool) -> bool:
+        logger.info(f"Stripping potential enca wrapper from {input_path.name} {'(forcing mpegts)' if force_ts else ''}")
+        cmd = [get_ffmpeg_path(), "-y"]
+        if force_ts:
+            cmd += ["-f", "mpegts"]
+        cmd += ["-i", str(input_path), "-map", "0:a", "-c:a", "copy", str(output_path)]
+        return _run_command(cmd, f"ffmpeg strip-enca {input_path.name}{' (mpegts)' if force_ts else ''}")
+
+    if _run(is_mpegts_file(str(input_path))):
+        logger.info(f"Strip-enca successful for {input_path.name}")
+        return True
+
+    return _run(True)
 
 
 def _select_hybrid_video(video_track, other_videos):

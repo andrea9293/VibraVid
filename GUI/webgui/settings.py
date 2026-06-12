@@ -42,6 +42,7 @@ try:
     _DB_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
     _DB_DIR = BASE_DIR
+
 # One-shot migration: lift an existing legacy DB into the new location.
 _LEGACY_DB = BASE_DIR / "db.sqlite3"
 _NEW_DB = _DB_DIR / "db.sqlite3"
@@ -52,8 +53,29 @@ if _DB_DIR != BASE_DIR and _LEGACY_DB.exists() and not _NEW_DB.exists():
     except Exception:
         pass
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-secret-key")
-DEBUG = _env_flag("DJANGO_DEBUG", True)
+def _get_secret_key() -> str:
+    """Resolve the Django secret key with a safe default."""
+    env_key = os.environ.get("DJANGO_SECRET_KEY")
+    if env_key:
+        return env_key
+
+    key_file = _DB_DIR / ".django_secret_key"
+    try:
+        if key_file.exists():
+            existing = key_file.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        from django.core.management.utils import get_random_secret_key
+        generated = get_random_secret_key()
+        key_file.write_text(generated, encoding="utf-8")
+        return generated
+    except Exception:
+        from django.core.management.utils import get_random_secret_key
+        return get_random_secret_key()
+
+
+SECRET_KEY = _get_secret_key()
+DEBUG = _env_flag("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", "*") or ["*"]
 
 INSTALLED_APPS = [

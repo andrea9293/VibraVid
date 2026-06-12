@@ -1,13 +1,10 @@
 <div align="center">
 
-[![PyPI Version](https://img.shields.io/pypi/v/vibravid?logo=pypi&logoColor=white&labelColor=2d3748&color=3182ce&style=for-the-badge)](https://pypi.org/project/vibravid/)
 [![Sponsor](https://img.shields.io/badge/💖_Sponsor-ea4aaa?style=for-the-badge&logo=github-sponsors&logoColor=white&labelColor=2d3748)](https://ko-fi.com/arrowar)
 
 [![Windows](https://img.shields.io/badge/🪟_Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_win_2025_x64.exe)
 [![macOS](https://img.shields.io/badge/🍎_macOS-000000?style=for-the-badge&logo=apple&logoColor=white&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_mac_15_x64)
 [![Linux](https://img.shields.io/badge/🐧_Linux_latest-FCC624?style=for-the-badge&logo=linux&logoColor=black&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_linux_24_04_x64)
-
-_⚡ **Quick Start:** `pip install VibraVid && VibraVid`_
 
 **🌍 Language / Lingua**
 
@@ -38,21 +35,7 @@ _⚡ **Quick Start:** `pip install VibraVid && VibraVid`_
 
 ## Installation
 
-### Option 1 — PyPI (recommended)
-
-```bash
-pip install VibraVid
-VibraVid
-```
-
-### Option 2 — uv
-
-```bash
-uv tool install VibraVid
-VibraVid
-```
-
-### Option 3 — Manual Clone
+### Option 1 — Manual Clone
 
 ```bash
 git clone https://github.com/AstraeLabs/VibraVid.git
@@ -75,13 +58,13 @@ uv run manual.py     # run
 uv sync --upgrade    # sync deps
 ```
 
-### Option 4 — Unraid
+### Option 2 — Unraid
 
 ```
 You can find the app in the Community Application
 ```
 
-### Option 5 — Android/Termux (automatic)
+### Option 3 — Android/Termux (automatic)
 
 > [!IMPORTANT]
 > This script requires **Termux**. Do **NOT** install Termux from the Google Play Store, as that version is outdated and abandoned due to Android policy restrictions. Instead, download the latest official version from:
@@ -110,10 +93,6 @@ vibravid
 ## Quick Start
 
 ```bash
-# PyPI or uv install
-VibraVid
-
-# Manual clone
 python manual.py
 ```
 
@@ -127,23 +106,23 @@ python manual.py
 VibraVid -UP
 ```
 
-### PyPI
-
-```bash
-pip install VibraVid --upgrade
-```
-
-### uv
-
-```bash
-uv tool upgrade VibraVid
-```
-
 ### Manual clone
 
 ```bash
 git fetch origin
 git reset --hard origin/main
+```
+
+Then sync dependencies:
+
+**pip:**
+```bash
+pip install -r requirements.txt --upgrade
+```
+
+**uv:**
+```bash
+uv sync --upgrade
 ```
 
 > If the folder is not yet an initialized Git repository:
@@ -366,6 +345,17 @@ Use `select_video`, `select_audio`, and `select_subtitle` to control which track
 | `"ita_forced"` | Language with flag (`forced`, `cc`, `sdh`) |
 | `"ita_forced\|eng_cc"` | Multiple languages with flags |
 | `"false"` | Skip subtitles |
+
+**Companion Dolby Vision (`select_video` only):**
+
+Add `&dv=<quality>` to the video filter to also download a Dolby Vision companion alongside the main (non-DV) video. `<quality>` is `best`/`worst` (default `worst`):
+
+| Value | Description |
+|-------|-------------|
+| `"best&dv"` | Best non-DV video + DV companion at worst quality |
+| `"1080&dv=best"` | 1080p main video + DV companion at best quality |
+
+The DV track is muxed as an additional video track via mkvmerge.
 
 ---
 

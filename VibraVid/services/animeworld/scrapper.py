@@ -44,15 +44,19 @@ class ScrapSerie:
         for data in soup.select('li.episode > a'):
             epNum = data.get('data-episode-num')
             epID = data.get('data-episode-id')
+            play_href = data.get('href', '')
 
             if nums and epNum not in nums:
                 continue
 
+            ep_token = data.get('data-id', '')
             if epID not in raw_eps:
                 raw_eps[epID] = Episode(
                     number=epNum,
-                    url=f"/api/download/{epID}",
-                    id=epID
+                    url="/api/episode/info",
+                    id=epID,
+                    play_url=play_href,
+                    token=ep_token
                 )
 
         episodes = [episode_data for episode_data in raw_eps.values()]

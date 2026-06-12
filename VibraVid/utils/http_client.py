@@ -19,8 +19,13 @@ from VibraVid.utils import config_manager
 
 logger = logging.getLogger(__name__)
 ua = ua_generator.generate(device="desktop", browser=("chrome", "edge"))
-CONF_PROXY = config_manager.config.get_dict("REQUESTS", "proxy") or {}
-USE_PROXY = bool(config_manager.config.get_bool("REQUESTS", "use_proxy"))
+
+
+def _use_proxy() -> bool:
+    try:
+        return bool(config_manager.config.get_bool("REQUESTS", "use_proxy", default=False))
+    except Exception:
+        return False
 
 
 def _get_timeout() -> int:
@@ -38,12 +43,12 @@ def _get_verify() -> bool:
 
 
 def _get_proxies() -> Optional[Dict[str, str]]:
-    """Return proxies dict if `USE_PROXY` is true and proxy config is present, else None."""
-    if not USE_PROXY:
+    """Return proxies dict if proxy use is enabled and proxy config is present, else None."""
+    if not _use_proxy():
         return None
 
     try:
-        proxies = CONF_PROXY if isinstance(CONF_PROXY, dict) else config_manager.config.get_dict("REQUESTS", "proxy")
+        proxies = config_manager.config.get_dict("REQUESTS", "proxy", default={})
         if not isinstance(proxies, dict):
             return None
 

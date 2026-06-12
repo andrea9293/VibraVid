@@ -6,6 +6,7 @@ import inspect
 
 from VibraVid.utils import config_manager
 from .site_loader import folder_name as lazy_loader_folder
+from .site_loader import current_site_var
 
 
 logger = logging.getLogger(__name__)
@@ -13,11 +14,16 @@ logger = logging.getLogger(__name__)
 
 def get_site_name_from_stack():
     """
-    Extract site name from the call stack.
-    
+    Resolve the current service name.
+
     Returns:
         str: Site name, or None if not found
     """
+    ctx_name = current_site_var.get()
+    if ctx_name:
+        logger.debug(f"Extracted site_name from context variable: {ctx_name}")
+        return ctx_name
+
     for frame_info in inspect.stack():
         file_path = frame_info.filename
         if f"{lazy_loader_folder}{os.sep}" in file_path:
