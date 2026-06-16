@@ -59,3 +59,7 @@ Conf/config.json.backup
 .claude
 /.claude
 CLAUDE.md
+
+Vibe/*
+/Video/
+GUI/.django_secret_key

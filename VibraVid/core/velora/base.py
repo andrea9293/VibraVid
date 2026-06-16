@@ -353,7 +353,6 @@ class BaseMediaDownloader:
         sel_video = [s for s in self.streams if s.type == "video"    and s.selected and not s.is_external]
         sel_audio = [s for s in self.streams if s.type == "audio"    and s.selected and not s.is_external]
         sel_subs  = [s for s in self.streams if s.type == "subtitle" and s.selected and not s.is_external]
-        logger.info(f"Preparing labels -- {len(self.streams)} streams  type={self.manifest_type}")
 
         self._has_video = bool(sel_video)
         if sel_video:
@@ -437,8 +436,6 @@ class BaseMediaDownloader:
             if task_key not in seen_sub_keys:
                 seen_sub_keys.add(task_key)
                 self._sub_task_keys.append((task_key, label))
-
-        logger.info(f"Labels ready -- video={self._video_label!r} audio={list(self._audio_labels)[:4]}  subs={list(self._sub_labels)[:4]}")
 
     @staticmethod
     def _sub_discriminator(stream) -> str:

@@ -67,14 +67,12 @@ def parse_headers(headers_list: Optional[list]) -> dict:
 
 
 def parse_keys(key_list: Optional[list]) -> Optional[list]:
-    """
-    Return a list of 'kid:key' strings or None if empty.
-    Each element comes from one --key argument.
-    """
+    """Normalise the raw ``--key`` argument(s) into a list of clean ``'kid:key'`` strings (or None if empty)."""
     if not key_list:
         return None
-    cleaned = [k.strip() for k in key_list if k.strip()]
-    return cleaned if cleaned else None
+
+    from VibraVid.core.decryptor import KeysManager
+    return KeysManager(key_list).get_keys_list() or None
 
 
 def derive_output_path(url: str, output: Optional[str], extension: str) -> str:

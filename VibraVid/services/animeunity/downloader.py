@@ -63,7 +63,8 @@ def download_episode(obj_episode, index_select, scrape_serie, video_source):
             season_number = int(season_number)
         except (TypeError, ValueError):
             season_number = 1
-        path_components, filename = map_episode_path(series_name=scrape_serie.series_name, series_year=None, season_number=season_number, episode_number=episode_number, episode_name=episode_name)
+        
+        path_components, filename = map_episode_path(series_name=scrape_serie.series_name, series_year=None, season_number=season_number, episode_number=episode_number, episode_name=episode_name, absolute_number=episode_number)
         mp4_path = os_manager.get_sanitize_path(anime_folder(*path_components))
         mp4_name = filename
     else:

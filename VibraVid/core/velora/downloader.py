@@ -269,6 +269,69 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             logger.info(f"Limiting download to {acc:.1f}s of content (max_time={self.max_time:.0f}s)")
         return result
 
+    def _assign_segment_durations(self, stream, dl_segs: List[Dict], headers: Dict) -> None:
+        """Populate each media segment's ``"duration"`` (seconds) for the ``--max-time``"""
+        if stream.is_live or not self.max_time:
+            return
+
+        media = [s for s in dl_segs if s.get("seg_type") == "media"]
+        if not media:
+            return
+
+        durations = self._segment_durations_from_sidx(dl_segs, headers)
+        if durations:
+            for seg, dur in zip(media, durations):
+                seg["duration"] = dur
+            logger.info(f"max_time: per-segment durations from sidx ({len(durations)} segs, total {sum(durations):.0f}s)")
+        elif stream.duration > 0:
+            avg = stream.duration / len(media)
+            logger.info(f"max_time: no sidx, using manifest average {avg:.3f}s/seg")
+            for seg in media:
+                seg["duration"] = avg
+
+    def _segment_durations_from_sidx(self, dl_segs: List[Dict], headers: Dict) -> Optional[List[float]]:
+        """Exact per-segment durations from the file's ``sidx`` (segment index) box."""
+        media = [s for s in dl_segs if s.get("seg_type") == "media"]
+        init_seg = next((s for s in dl_segs if s.get("seg_type") == "init"), None)
+        if init_seg is None or not media:
+            return None
+        try:
+            with create_client(headers=headers, timeout=REQUEST_TIMEOUT, follow_redirects=True) as c:
+                r = c.get(init_seg["url"], headers=init_seg.get("headers"))
+                r.raise_for_status()
+                data = r.content
+
+            idx = data.find(b"sidx")
+            if idx < 0:
+                return None
+            p = idx + 4
+            version = data[p]                        # version (1) + flags (3)
+            p += 4
+            p += 4                                   # reference_ID
+            timescale = struct.unpack(">I", data[p:p + 4])[0]
+            p += 4
+            if timescale <= 0:
+                return None
+            p += 8 if version == 0 else 16           # earliest_presentation_time + first_offset
+            p += 2                                   # reserved
+            ref_count = struct.unpack(">H", data[p:p + 2])[0]
+            p += 2
+
+            durs: List[float] = []
+            for _ in range(ref_count):
+                p += 4                               # reference type (1 bit) + size (31 bits)
+                subdur = struct.unpack(">I", data[p:p + 4])[0]
+                p += 4
+                p += 4                               # SAP
+                durs.append(subdur / timescale)
+
+            if len(durs) < len(media):
+                return None
+            return durs[:len(media)]
+        except Exception as e:
+            logger.debug(f"sidx parse failed: {e}")
+            return None
+
     def _stream_task_key(self, stream) -> str:
         if stream.type == "video":
             return self._video_task_key
@@ -413,7 +476,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                     "headers":  {"Range": f"bytes={seg.byte_range}"},
                 })
                 next_num += 1
-            
+
             elif is_single_file and seg.seg_type == "media":
                 ranged = build_dash_ranged_segments(seg.url, all_headers, chunk_size, REQUEST_TIMEOUT)
                 if ranged:
@@ -422,7 +485,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                         part["seg_type"] = seg.seg_type
                         dl_segs.append(part)
                         next_num += 1
-                    
+
                     continue
                 else:
                     dl_segs.append({"url": seg.url, "number": next_num, "seg_type": seg.seg_type, "enc": {"method": "NONE"}})
@@ -431,13 +494,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                 dl_segs.append({"url": seg.url, "number": next_num, "seg_type": seg.seg_type, "enc": {"method": "NONE"}})
                 next_num += 1
 
-        if not stream.is_live and stream.duration > 0:
-            media_segs_count = sum(1 for s in dl_segs if s.get("seg_type") == "media")
-            if media_segs_count > 0:
-                avg_dur = stream.duration / media_segs_count
-                for seg in dl_segs:
-                    if seg.get("seg_type") == "media":
-                        seg["duration"] = avg_dur
+        self._assign_segment_durations(stream, dl_segs, all_headers)
 
         if self.max_segments and self.max_segments > 0:
             dl_segs = dl_segs[:self.max_segments]
@@ -462,7 +519,13 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                 for s in dl_segs if s["number"] in failed_set
             }
 
-        self._download_stream_generic(dl_segs, stream, "dash", "mp4", bar_manager, live_decryption=live_decryption, seg_url_refresh_fn=_refresh_dash_seg_urls)
+        # Single-file byte-range DASH: every media segment is a byte range of ONE file.
+        byte_range_single_file = bool(media_segments) and all(s.byte_range for s in media_segments)
+        effective_live = live_decryption and not byte_range_single_file
+        if byte_range_single_file and live_decryption:
+            logger.info("DASH byte-range single-file stream: decrypting after merge (not per-segment)")
+
+        self._download_stream_generic(dl_segs, stream, "dash", "mp4", bar_manager, live_decryption=effective_live, seg_url_refresh_fn=_refresh_dash_seg_urls)
 
     def _download_ism_stream(self, stream, bar_manager: DownloadBarManager) -> None:
         if not stream.segments:
@@ -502,7 +565,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                         part["enc"] = ism_enc_dict
                         dl_segs.append(part)
                         next_num += 1
-                    
+
                     continue
                 else:
                     dl_segs.append({"url": seg.url, "number": next_num, "seg_type": seg.seg_type, "enc": ism_enc_dict})
@@ -511,13 +574,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                 dl_segs.append({"url": seg.url, "number": next_num, "seg_type": seg.seg_type, "enc": ism_enc_dict})
                 next_num += 1
 
-        if not stream.is_live and stream.duration > 0:
-            media_segs_count = sum(1 for s in dl_segs if s.get("seg_type") == "media")
-            if media_segs_count > 0:
-                avg_dur = stream.duration / media_segs_count
-                for seg in dl_segs:
-                    if seg.get("seg_type") == "media":
-                        seg["duration"] = avg_dur
+        self._assign_segment_durations(stream, dl_segs, all_headers)
 
         if self.max_segments and self.max_segments > 0:
             dl_segs = dl_segs[:self.max_segments]
@@ -703,13 +760,26 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             return False
         
         logger.info(f"ISM file: {encrypted_temp} ({encrypted_temp.stat().st_size} bytes)")
+
+        # Continue the track's own bar for the decrypt phase (status "@ Merge" → "@ CTR",
+        # bar restarts) instead of spawning a separate "Dec …" bar.
+        def _decrypt_cb(parsed: Optional[Dict[str, Any]]) -> None:
+            if not parsed:
+                return
+            
+            bar_manager.handle_progress_line({
+                "task_key": task_key,
+                "pct": parsed.get("pct"),
+                "speed": parsed.get("status") or "Decrypt",
+            })
+
         decryptor = Decryptor()
         ok = decryptor.decrypt(
             str(encrypted_temp),
             self.key,
             str(out_path),
             stream_type=stream.type,
-            progress_cb=bar_manager.handle_progress_line,
+            progress_cb=_decrypt_cb,
         )
 
         try:
@@ -727,13 +797,8 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             return False
         logger.info(f"Check post-mux OK for{out_path.name}: {verify_msg}")
 
-        bar_manager.handle_progress_line({
-            "task_key": task_key,
-            "pct": 100,
-            "segments": f"{total}/{total}",
-            "size": f"{_fmt_size(out_path.stat().st_size)}/{_fmt_size(out_path.stat().st_size)}",
-            "speed": "Merge",
-        })
+        # Finalize at 100%, keeping the decrypt status/segment/size (don't revert to Merge).
+        bar_manager.handle_progress_line({"task_key": task_key, "pct": 100})
         return True
 
     def _download_stream_generic(self, dl_segs: List[Dict], stream, protocol: str, default_ext: str, bar_manager: DownloadBarManager, live_decryption: bool = False, seg_url_refresh_fn=None) -> None:
@@ -782,7 +847,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                     return
                 probe_done = True
             
-            logger.info(f"{protocol.upper()} probe starting -> {target_path.name} ({reason})")
+            logger.debug(f"{protocol.upper()} probe starting -> {target_path.name} ({reason})")
             self._probe_media_file(target_path)
 
         def _replace_segment_file(source_path: Path, target_path: Path, reason: str) -> None:
@@ -911,7 +976,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
                     if protocol_lower == "dash" and live_decryption and self.key:
                         if seg.get("seg_type") == "init":
                             dash_init_path = fp
-                            logger.info(f"DASH init segment cached -> {fp.name}")
+                            logger.debug(f"DASH init segment cached -> {fp.name}")
                             _probe_once(fp, "dash-init-segment")
                             queued = pending_dash[:]
                             pending_dash.clear()
@@ -966,7 +1031,6 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
 
         # Token-refresh retry: when segments fail (e.g. the CDN manifest token expired mid-download → HTTP 403)
         if seg_url_refresh_fn and not self._stop_check():
-            logger.info(f"{protocol.upper()} checking for failed segments to retry with fresh tokens")
             seg_by_number = {s["number"]: s for s in dl_segs}
             failed = collect_failed_segments(dl_segs, paths, stream_dir, default_ext)
             rounds = 0
@@ -1029,7 +1093,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
 
         # Standard merge for HLS/DASH
         merge_total_size = sum(p.stat().st_size for p in paths if p.exists())
-        logger.info(f"{protocol.upper()} binary merge starting -> {out_path.name} ({len(paths)} segs, {_fmt_size(merge_total_size)})")
+        logger.info(f"Binary merge starting -> {out_path.name} ({len(paths)} segs, {_fmt_size(merge_total_size)})")
         bar_manager.handle_progress_line({
             "task_key": task_key,
             "pct": 100,
@@ -1039,7 +1103,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
         })
 
         binary_merge_segments(paths, out_path, merge_logger=logger)
-        logger.info(f"{protocol.upper()} binary merge completed -> {out_path.name}")
+        logger.debug(f"Binary merge completed -> {out_path.name}")
 
         # Post-merge decryption for HLS/DASH (if needed)
         is_plain_subtitle = (
@@ -1049,11 +1113,28 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
         )
 
         stream_is_encrypted = stream.drm.method is not None
+        decrypted_ok = False
         if (not live_decryption) and self.key and stream_is_encrypted and out_path.exists() and out_path.stat().st_size > 0 and not is_plain_subtitle:
             post_merge_path = out_path.with_suffix(out_path.suffix + ".dec")
+
+            # Continue this track's own progress bar for the decrypt phase: keep the track
+            # label, just swap the status (the "@ Merge" text) for the decrypt method/backend
+            def _decrypt_cb(parsed: Optional[Dict[str, Any]]) -> None:
+                if not parsed:
+                    return
+                
+                # Only the bar position (pct) and the status text change; segment count and
+                # size stay as the merge left them — just "@ Merge" → "@ CTR".
+                bar_manager.handle_progress_line({
+                    "task_key": task_key,
+                    "pct": parsed.get("pct"),
+                    "speed": parsed.get("status") or "Decrypt",
+                })
+
             try:
                 decryptor = Decryptor()
-                if decryptor.decrypt(str(out_path), self.key, str(post_merge_path), stream_type=stream.type, progress_cb=bar_manager.handle_progress_line):
+                if decryptor.decrypt(str(out_path), self.key, str(post_merge_path), stream_type=stream.type, progress_cb=_decrypt_cb):
+                    decrypted_ok = True
                     try:
                         out_path.unlink(missing_ok=True)
                         post_merge_path.rename(out_path)
@@ -1076,7 +1157,11 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
 
         if out_path.exists() and out_path.stat().st_size > 0:
             logger.debug(f"{protocol.upper()} merged {len(paths):>4} segs -> {out_path.name} ({out_path.stat().st_size // 1024} KB)")
-            _progress(total, total, out_path.stat().st_size, 0.0, speed_label="Merge")
+            if decrypted_ok:
+                # Finalize the bar at 100%, keeping segment/size/status as-is.
+                bar_manager.handle_progress_line({"task_key": task_key, "pct": 100})
+            else:
+                _progress(total, total, out_path.stat().st_size, 0.0, speed_label="Merge")
         else:
             logger.error(f"{protocol.upper()} binary merge produced empty file: {out_path}")
 
@@ -1098,7 +1183,7 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             else:
                 plan_label = ""
 
-            logger.info(f"Starting download plan for {plan_task_key} with {len(segs)} segments")
+            logger.debug(f"Starting download plan for {plan_task_key} with {len(segs)} segments")
             plan = {
                 "project": "Velora",
                 "version": 1,

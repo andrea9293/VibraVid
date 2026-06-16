@@ -151,10 +151,11 @@ def _is_file_url(url: str) -> bool:
 
 
 class DashParser:
-    def __init__(self, mpd_url: str, headers: Dict[str, str] = None, provided_kid: str = None, content: Optional[str] = None):
+    def __init__(self, mpd_url: str, headers: Dict[str, str] = None, provided_kid: str = None, content: Optional[str] = None, quiet: bool = False):
         self.mpd_url = mpd_url
         self.headers = headers or {}
         self.provided_kid = provided_kid
+        self.quiet = quiet
         self._injected = content
         self.raw_content: Optional[str] = content
         self._root: Optional[ET.Element] = None
@@ -341,13 +342,15 @@ class DashParser:
 
                     global_seen_keys.add(dedup_key)
                     streams.append(s)
-                    logger.info(f"DASH add | {s}")
+                    if not self.quiet:
+                        logger.info(f"DASH add | {s}")
 
         if manifest_is_live:
             for s in streams:
                 s.is_live = True
 
-        logger.info(f"DASH manifest type: {'LIVE' if manifest_is_live else 'VOD'}")
+        if not self.quiet:
+            logger.info(f"DASH manifest type: {'LIVE' if manifest_is_live else 'VOD'}")
         if self._uses_range_split:
             logger.info("DASH manifest uses range-split (SegmentBase with byte ranges). Live decryption is disabled for all streams in this manifest.")
 
@@ -833,6 +836,18 @@ class DashParser:
             return None
     
     def _apply_segment_list(self, seg_list, stream, base_url):
+        seg_urls = seg_list.findall("mpd:SegmentURL", _NS)
+
+        # For byte-range (single-file) SegmentLists, find where the first media range
+        # starts so we can close any gap between the Initialization range and it.
+        first_media_start = None
+        for seg_el in seg_urls:
+            if not seg_el.get("media"):
+                mr = seg_el.get("mediaRange", "")
+                if "-" in mr and mr.split("-")[0].isdigit():
+                    first_media_start = int(mr.split("-")[0])
+                    break
+
         init_el = seg_list.find("mpd:Initialization", _NS)
         if init_el is not None:
             src = init_el.get("sourceURL", "")
@@ -841,9 +856,15 @@ class DashParser:
             else:
                 init_range = init_el.get("range", "")
                 if init_range:
+                    
+                    # Close the gap between the init range and the first media range. That
+                    # gap is usually a `sidx` index box the SegmentList doesn't list
+                    parts = init_range.split("-")
+                    if len(parts) == 2 and parts[1].isdigit() and first_media_start is not None and int(parts[1]) + 1 < first_media_start:
+                        init_range = f"{parts[0]}-{first_media_start - 1}"
                     stream.add_segment(Segment(self._inherit_query(base_url.rstrip("/"), self._mpd_query), 0, "init", byte_range=init_range))
-        
-        for idx, seg_el in enumerate(seg_list.findall("mpd:SegmentURL", _NS), start=1):
+
+        for idx, seg_el in enumerate(seg_urls, start=1):
             media_url = seg_el.get("media", "")
             if media_url:
                 stream.add_segment(Segment(self._inherit_query(urljoin(base_url, media_url), self._mpd_query), idx, "media"))

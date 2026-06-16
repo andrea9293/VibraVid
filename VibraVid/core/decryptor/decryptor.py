@@ -11,7 +11,7 @@ from VibraVid.core.ui.bar_manager import console
 
 from ._subprocess_runner import run_with_progress
 from ._models import SCHEME_TO_MODE
-from .keys_manager import normalize_keys, is_zero_kid, resolve_fixed_key_if_needed
+from .keys_manager import KeysManager
 from ._mp4_inspector import detect_encryption_info
 
 
@@ -60,7 +60,7 @@ class Decryptor:
         logger.debug(f"Encryption finalized: scheme={info.scheme}, mode={mode}, kid={info.kid}, codec={info.video_codec}, enc_method={info.encryption_method}")
         return mode, info.kid, info.pssh_b64, info.video_codec, info.encryption_method
 
-    def _decrypt_bento4_nonlive(self, encrypted_path: str, normalized_keys: list[tuple[str, str]], output_path: str, label: str, is_fixed_key: bool = False, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
+    def _decrypt_bento4_nonlive(self, encrypted_path: str, normalized_keys: list[tuple[str, str]], output_path: str, label: str, is_fixed_key: bool = False, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None, status: Optional[str] = None) -> bool:
         cmd = [self.mp4decrypt_path]
 
         pairs = normalized_keys
@@ -73,7 +73,7 @@ class Decryptor:
         cmd.extend([encrypted_path, output_path])
 
         logger.info(f"Bento4 cmd: {self._redacted_cmd(cmd)}")
-        result = run_with_progress(cmd, label, encrypted_path, output_path, progress_cb=progress_cb)
+        result = run_with_progress(cmd, label, encrypted_path, output_path, progress_cb=progress_cb, status=status)
         if result is True:
             if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
                 logger.error("Bento4 reported success but output is missing/empty")
@@ -122,7 +122,7 @@ class Decryptor:
             logger.error(f"Exception Bento4 live: {exc}")
             return False, f"Exception Bento4: {exc}", None
 
-    def _decrypt_shaka_nonlive(self, encrypted_path: str, normalized_keys: list[tuple[str, str]], output_path: str, stream_type: str, label: str, is_fixed_key: bool = False, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
+    def _decrypt_shaka_nonlive(self, encrypted_path: str, normalized_keys: list[tuple[str, str]], output_path: str, stream_type: str, label: str, is_fixed_key: bool = False, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None, status: Optional[str] = None) -> bool:
         keys_arg: list[str] = []
         for idx, (kid, key) in enumerate(normalized_keys, start=1):
             shaka_kid = "00000000000000000000000000000000" if is_fixed_key else kid
@@ -143,7 +143,7 @@ class Decryptor:
         ]
 
         logger.info(f"Shaka cmd: {self._redacted_cmd(cmd)}")
-        result = run_with_progress(cmd, label, encrypted_path, shaka_output, progress_cb=progress_cb)
+        result = run_with_progress(cmd, label, encrypted_path, shaka_output, progress_cb=progress_cb, status=status)
         if result is True:
             if shaka_output != output_path and os.path.exists(shaka_output):
                 try:
@@ -170,7 +170,7 @@ class Decryptor:
         logger.info(f"decrypt(): {os.path.basename(encrypted_path)} stream={stream_type} keys={keys} [NON-LIVE]")
         try:
             mode, kid, _pssh, _codec, enc_method = self.detect_encryption(encrypted_path)
-            norm_keys = normalize_keys(keys)
+            norm_keys = KeysManager.normalize(keys)
 
             if mode is None:
                 if not norm_keys:
@@ -179,7 +179,7 @@ class Decryptor:
                     return True
                 mode = "unknown"
 
-            norm_keys = resolve_fixed_key_if_needed(encrypted_path, kid, norm_keys)
+            norm_keys = KeysManager.resolve_fixed_key(encrypted_path, kid, norm_keys)
             if not norm_keys:
                 logger.error("No valid keys available for decryption")
                 return False
@@ -192,16 +192,18 @@ class Decryptor:
                 label = f"[cyan]Dec[/cyan] [green]{filename}[/green] [[magenta]{method_display}[/magenta]] - [yellow]Shaka[/yellow]"
                 ok = self._decrypt_shaka_nonlive(
                     encrypted_path, norm_keys, output_path,
-                    stream_type, label, is_fixed_key=is_zero_kid(kid), progress_cb=progress_cb,
+                    stream_type, label, is_fixed_key=KeysManager.is_zero_kid(kid), progress_cb=progress_cb,
+                    status=method_display,
                 )
             else:
                 if use_shaka:
                     logger.warning("CBCS/SAMPLE-AES detected but Shaka Packager not available — falling back to Bento4")
-                
+
                 label = f"[cyan]Dec[/cyan] [green]{filename}[/green] [[magenta]{method_display}[/magenta]] - [yellow]Bento4[/yellow]"
                 ok = self._decrypt_bento4_nonlive(
                     encrypted_path, norm_keys, output_path,
-                    label, is_fixed_key=is_zero_kid(kid), progress_cb=progress_cb,
+                    label, is_fixed_key=KeysManager.is_zero_kid(kid), progress_cb=progress_cb,
+                    status=method_display,
                 )
 
             if ok:
@@ -220,12 +222,12 @@ class Decryptor:
             return False
 
     def decrypt_file(self, encrypted_path: str, decrypted_path: str, keys, label: str, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> tuple:
-        norm_keys = normalize_keys(keys)
+        norm_keys = KeysManager.normalize(keys)
         if not norm_keys:
             return False, "Could not parse any keys."
 
         mode, kid, _pssh, _codec, _enc_method = self.detect_encryption(encrypted_path)
-        norm_keys = resolve_fixed_key_if_needed(encrypted_path, kid, norm_keys)
+        norm_keys = KeysManager.resolve_fixed_key(encrypted_path, kid, norm_keys)
 
         method_display = (_enc_method or mode or "unknown").upper().replace("_", "-")
         filename = os.path.basename(encrypted_path)
@@ -233,7 +235,7 @@ class Decryptor:
 
         ok = self._decrypt_bento4_nonlive(
             encrypted_path, norm_keys, decrypted_path,
-            rich_label, is_fixed_key=is_zero_kid(kid), progress_cb=progress_cb,
+            rich_label, is_fixed_key=KeysManager.is_zero_kid(kid), progress_cb=progress_cb,
         )
 
         if ok:
@@ -242,5 +244,5 @@ class Decryptor:
 
     def decrypt_segment_live(self, encrypted_path: str, decrypted_path: str, raw_keys, init_path: Optional[str] = None) -> tuple:
         logger.debug(f"decrypt_segment_live(): {os.path.basename(encrypted_path)} -> {os.path.basename(decrypted_path)} [LIVE -> BENTO4]")
-        norm_keys = normalize_keys(raw_keys)
+        norm_keys = KeysManager.normalize(raw_keys)
         return self._decrypt_bento4_live(encrypted_path, decrypted_path, norm_keys, init_path=init_path)

@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 MOVIE_FORMAT = config_manager.config.get('OUTPUT', 'movie_format')
 EPISODE_FORMAT = config_manager.config.get('OUTPUT', 'episode_format')
 SONG_FORMAT = config_manager.config.get('OUTPUT', 'song_format', default=None)
+_MEDIA_TOKENS = {'quality', 'language', 'video_codec', 'audio_codec'}
+_TMDB_TOKENS = ('%(tmdb_id)', '%(imdb_id)', '%(original_title)', '%(original_language)')
 
 
 def _apply_format_token(token: str, value: int) -> str:
@@ -73,6 +75,70 @@ def _replace_format_key(fmt_string: str, key: str, value) -> str:
 
     pattern = _re.compile(r'%\(' + _re.escape(key) + r':([^)]+)\)')
     return pattern.sub(replacer, fmt_string)
+
+
+def _resolve_tmdb_tokens(fmt: str, title: str, year, media_type: str) -> str:
+    """Resolve TMDB-backed tokens (%(tmdb_id), %(imdb_id), %(original_title), %(original_language)) when present in the format string."""
+    if not title or not any(tok in fmt for tok in _TMDB_TOKENS):
+        return fmt
+
+    try:
+        slug = tmdb_client._slugify(title)
+        year_str = None
+        if year is not None:
+            y = str(year).split('-')[0].strip()
+            year_str = y if (y.isdigit() and len(y) == 4) else None
+
+        info = tmdb_client.get_type_and_id_by_slug_year(slug, year_str, media_type)
+        if not info or not info.get('id'):
+            return fmt
+
+        tmdb_id = info['id']
+        resolved_type = info.get('type', media_type)
+
+        if "%(tmdb_id)" in fmt:
+            fmt = fmt.replace("%(tmdb_id)", str(tmdb_id))
+
+        if "%(imdb_id)" in fmt:
+            imdb_id = tmdb_client.get_imdb_id(tmdb_id, resolved_type)
+            if imdb_id:
+                fmt = fmt.replace("%(imdb_id)", str(imdb_id))
+
+        if "%(original_title)" in fmt:
+            original_title = tmdb_client.get_original_title(tmdb_id, resolved_type)
+            if original_title:
+                fmt = fmt.replace("%(original_title)", os_manager.get_sanitize_file(original_title))
+                
+        if "%(original_language)" in fmt:
+            original_language = tmdb_client.get_original_language(tmdb_id, resolved_type)
+            if original_language:
+                fmt = fmt.replace("%(original_language)", str(original_language))
+
+    except Exception as e:
+        logger.warning(f"TMDB token resolution failed for '{title}': {e}")
+
+    return fmt
+
+
+def _strip_unknown_tokens(fmt: str) -> str:
+    """
+    Remove any leftover %(...) token (and an immediately surrounding [] or ()
+    wrapper) that was not resolved, so unresolved placeholders never leak into
+    the final filename. Media tokens in _MEDIA_TOKENS are preserved because they
+    are resolved later, after muxing, in core/downloader/base.py::_finalize.
+
+    Mirrors the cleanup already applied to track_number in map_song_path.
+    """
+    def replacer(match):
+        key = match.group('key')
+        if key in _MEDIA_TOKENS:
+            return match.group(0)
+        return ''
+
+    pattern = _re.compile(r'[\[(]?%\((?P<key>\w+)(?::[^)]+)?\)[\])]?')
+    fmt = pattern.sub(replacer, fmt)
+    fmt = _re.sub(r'  +', ' ', fmt).replace(' /', '/').replace('/ ', '/')
+    return fmt.strip()
 
 
 def manage_selection(cmd_insert: str, max_count: int) -> List[int]:
@@ -164,6 +230,12 @@ def map_movie_path(title_name: str, title_year: str = None) -> tuple:
         map_movie_temp = map_movie_temp.replace("(%(title_year))", "").strip()
         map_movie_temp = map_movie_temp.replace("%(title_year)", "").strip()
 
+    # TMDB-backed tokens (best-effort)
+    map_movie_temp = _resolve_tmdb_tokens(map_movie_temp, title_name, title_year, "movie")
+
+    # Drop any token left unresolved (media tokens survive for _finalize)
+    map_movie_temp = _strip_unknown_tokens(map_movie_temp)
+
     # Split into path components and filename
     parts = map_movie_temp.split('/')
     filename = parts[-1] if parts else map_movie_temp
@@ -241,82 +313,7 @@ def map_song_path(artist: str, album: str, title: str, year: str = None, track_n
     return (path_components, filename)
 
 
-def map_series_name(series_name: str, series_year: str = None) -> str:
-    """Returns the sanitized series name for folder naming."""
-    logger.info(f"Mapping series name with name: {series_name} and year: {series_year}")
-    if series_name is not None:
-        return os_manager.get_sanitize_file(series_name)
-    return series_name
-
-
-def map_episode_title(tv_name: str, number_season: int, episode_number: int, episode_name: str) -> str:
-    """
-    Maps the episode title to a specific filename format.
-
-    Parameters:
-        tv_name (str): The name of the TV show.
-        number_season (int): The season number.
-        episode_number (int): The episode number.
-        episode_name (str): The original name of the episode.
-
-    Returns:
-        str: The mapped episode filename (without extension and path).
-    """
-    logger.info(f"Mapping episode title with name: {episode_name}, season: {number_season}, episode: {episode_number}")
-
-    # Extract only the filename part (after the last /)
-    episode_format_parts = EPISODE_FORMAT.split('/')
-    filename_format = episode_format_parts[-1] if episode_format_parts else EPISODE_FORMAT
-
-    map_episode_temp = filename_format
-
-    if tv_name is not None:
-        map_episode_temp = map_episode_temp.replace("%(tv_name)", os_manager.get_sanitize_file(tv_name))
-        map_episode_temp = map_episode_temp.replace("%(series_name)", os_manager.get_sanitize_file(tv_name))
-        map_episode_temp = map_episode_temp.replace("%(series_name_slug)", tmdb_client._slugify(tv_name))
-
-    season_val = number_season if number_season is not None else 0
-    map_episode_temp = _replace_format_key(map_episode_temp, 'season', season_val)
-
-    episode_val = episode_number if episode_number is not None else 0
-    map_episode_temp = _replace_format_key(map_episode_temp, 'episode', episode_val)
-
-    if episode_name is not None:
-        map_episode_temp = map_episode_temp.replace("%(episode_name)", os_manager.get_sanitize_file(episode_name))
-        map_episode_temp = map_episode_temp.replace("%(episode_name_slug)", tmdb_client._slugify(episode_name))
-
-    return map_episode_temp
-
-
-def map_season_name(season_number: int) -> str:
-    """
-    Maps the season number to a specific format for folder naming.
-    Reads the season segment directly from EPISODE_FORMAT.
-
-    Parameters:
-        season_number (int): The season number.
-
-    Returns:
-        str: The formatted season folder name (e.g., "S01", "S1", "S001").
-    """
-    logger.info(f"Mapping season name with season number: {season_number}")
-
-    # Find the path segment containing %(season:...) to use as folder name template
-    episode_parts = EPISODE_FORMAT.split('/')
-    season_segment = None
-    for part in episode_parts:
-        if _re.search(r'[Ss]%\(season:', part):
-            season_segment = part
-            break
-
-    if season_segment is None:
-        season_segment = "S%(season:02d)"
-
-    val = season_number if season_number is not None else 0
-    return _replace_format_key(season_segment, 'season', val)
-
-
-def map_episode_path(series_name: str, series_year: str = None, season_number: int = None, episode_number: int = None, episode_name: str = None) -> tuple:
+def map_episode_path(series_name: str, series_year: str = None, season_number: int = None, episode_number: int = None, episode_name: str = None, absolute_number: int = None) -> tuple:
     """
     Maps the complete episode path and filename using the consolidated episode_format config.
 
@@ -326,6 +323,7 @@ def map_episode_path(series_name: str, series_year: str = None, season_number: i
         season_number (int): The season number.
         episode_number (int): The episode number.
         episode_name (str): The name of the episode.
+        absolute_number (int): The absolute episode number (anime); enables %(absolute:FORMAT).
 
     Returns:
         tuple: (path_components, filename) where path_components is a list for path assembly
@@ -362,7 +360,17 @@ def map_episode_path(series_name: str, series_year: str = None, season_number: i
     if episode_name is not None:
         map_episode_temp = map_episode_temp.replace("%(episode_name)", os_manager.get_sanitize_file(episode_name))
         map_episode_temp = map_episode_temp.replace("%(episode_name_slug)", tmdb_client._slugify(episode_name))
-    
+
+    # Absolute episode number (anime) — honours inline format spec e.g. :000, :d
+    if absolute_number is not None:
+        map_episode_temp = _replace_format_key(map_episode_temp, 'absolute', absolute_number)
+
+    # TMDB-backed tokens (best-effort)
+    map_episode_temp = _resolve_tmdb_tokens(map_episode_temp, series_name, series_year, "tv")
+
+    # Drop any token left unresolved (media tokens survive for _finalize)
+    map_episode_temp = _strip_unknown_tokens(map_episode_temp)
+
     # Split into path components and filename
     parts = map_episode_temp.split('/')
     filename = parts[-1] if parts else map_episode_temp

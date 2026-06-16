@@ -65,7 +65,6 @@ class LazySearchModule:
                         if path not in sys.path:
                             sys.path.insert(0, path)
                             added_paths.append(path)
-                            logger.info(f"Added path to sys.path for '{self.module_name}': {path}")
                     
                     try:
                         logger.info(f"Loading module '{self.module_name}' from custom path: {self.base_path}")
@@ -82,7 +81,6 @@ class LazySearchModule:
                         for path in added_paths:
                             if path in sys.path:
                                 sys.path.remove(path)
-                                logger.info(f"Removed path from sys.path: {path}")
                 
                 self._search_func = getattr(self._module, 'search', None)
                 if self._search_func is None:

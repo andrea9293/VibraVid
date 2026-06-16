@@ -8,9 +8,6 @@ from typing import Dict, Optional
 
 from rich.console import Console
 
-from VibraVid.utils.http_client import get_headers, create_client
-
-
 console = Console()
 logger = logging.getLogger(__name__)
 
@@ -77,6 +74,8 @@ class BinaryPaths:
                 return self._paths_json_cache
 
             try:
+                from VibraVid.utils.http_client import get_headers, create_client
+
                 url = f"{self.github_repo}/binary_paths.json"
                 logger.info(f"Loading binary paths JSON from {url}")
                 with create_client(headers=get_headers()) as client:
@@ -159,6 +158,8 @@ class BinaryPaths:
                 # Write to a temporary file first, then rename atomically.
                 tmp_path = local_path + ".tmp"
                 try:
+                    from VibraVid.utils.http_client import get_headers, create_client
+
                     with create_client(headers=get_headers()) as client:
                         response = client.get(url)
                     response.raise_for_status()

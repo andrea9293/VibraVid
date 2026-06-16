@@ -234,6 +234,10 @@ All settings live in `config.json`. The sections below cover each configuration 
 | `%(language)` | Audio languages |
 | `%(video_codec)` | Video codec |
 | `%(audio_codec)` | Audio codec |
+| `%(original_title)` | Original-language title (requires TMDB API key) |
+| `%(original_language)` | Original language code, e.g. `ja` (requires TMDB API key) |
+| `%(tmdb_id)` | TMDB ID (requires TMDB API key) |
+| `%(imdb_id)` | IMDb ID, e.g. `tt0409591` (requires TMDB API key) |
 
 ---
 
@@ -256,18 +260,25 @@ S%(season:02d)/     →  season folder   S01/
 | `%(episode:FORMAT)` | Episode number with inline padding (see below) |
 | `%(episode_name)` | Episode title (sanitized) |
 | `%(episode_name_slug)` | Episode title as slug |
+| `%(absolute:FORMAT)` | Absolute episode number with inline padding — anime only (AnimeUnity/AnimeWorld) |
 | `%(quality)` | Video resolution |
 | `%(language)` | Audio languages |
 | `%(video_codec)` | Video codec |
 | `%(audio_codec)` | Audio codec |
+| `%(original_title)` | Original-language title (requires TMDB API key) |
+| `%(original_language)` | Original language code, e.g. `ja` (requires TMDB API key) |
+| `%(tmdb_id)` | TMDB ID (requires TMDB API key) |
+| `%(imdb_id)` | IMDb ID, e.g. `tt0409591` (requires TMDB API key) |
 
-**Inline padding syntax (for `season` and `episode`):**
+**Inline padding syntax (for `season`, `episode` and `absolute`):**
 
 | Token | Result (n=1) | Description |
 |-------|-------------|-------------|
 | `%(season:02d)` | `01` | Zero-pad to 2 digits |
 | `%(season:03d)` | `001` | Zero-pad to 3 digits |
 | `%(season:d)` | `1` | No padding |
+
+> Tokens that cannot be resolved (e.g. TMDB tokens without an API key, or `%(absolute)` on non-anime services) are removed from the filename together with any surrounding `[]`/`()` wrapper, so they never leak as literal text.
 
 ---
 

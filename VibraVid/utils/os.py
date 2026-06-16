@@ -12,8 +12,6 @@ from rich.console import Console
 from rich.prompt import Prompt
 from pathvalidate import sanitize_filename, sanitize_filepath
 
-from ..setup.binary_paths import binary_paths
-
 
 msg = Prompt()
 console = Console()
@@ -22,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class OsManager:
     def __init__(self):
+        from ..setup.binary_paths import binary_paths
         self.system = binary_paths._detect_system()
         self.max_length = self._get_max_length()
 

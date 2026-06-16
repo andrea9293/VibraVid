@@ -29,6 +29,8 @@ def handle_direct_download(args) -> bool:
     lic_url   = (getattr(args, 'license_url', None) or '').strip() or None
     lic_hdr   = parse_headers(getattr(args, 'license_headers', None))
     drm_pref  = (getattr(args, 'drm', None) or 'auto').strip().lower()
+    max_segs  = getattr(args, 'max_segments', None)
+    max_time  = getattr(args, 'max_time', None)
 
     # Map DRM string to DRMType constant (or None if not recognized)
     drm_choice = None
@@ -44,12 +46,7 @@ def handle_direct_download(args) -> bool:
     # Normalise key arg: single string → one-element list kept as list for
     # the segment-based downloaders; MP4 doesn't use keys so it's ignored.
     key_arg = keys
-
     url_type = detect_stream_type(url)
-    console.print(
-        f"\n[cyan]  Direct download[/cyan] — detected [bold]{url_type.upper()}[/bold]\n" +
-        (f"\n  [dim]drm :[/dim] {drm_pref}" if lic_url or keys else "")
-    )
 
     # Lazy import to avoid circular dependency
     from VibraVid.core.downloader import MP4_Downloader, HLS_Downloader, DASH_Downloader, ISM_Downloader
@@ -76,6 +73,8 @@ def handle_direct_download(args) -> bool:
                 output_path=output,
                 drm_preference=drm_choice or DRMType.WIDEVINE,
                 key=key_arg,
+                max_segments=max_segs,
+                max_time=max_time,
             )
             path, cancelled, error = dl.start()
 
@@ -94,6 +93,8 @@ def handle_direct_download(args) -> bool:
                 output_path=output,
                 drm_preference=effective_drm,
                 key=key_arg,
+                max_segments=max_segs,
+                max_time=max_time,
             )
             path, cancelled, error = dl.start()
 
@@ -112,9 +113,11 @@ def handle_direct_download(args) -> bool:
                 output_path=output,
                 drm_preference=effective_drm,
                 key=key_arg,
+                max_segments=max_segs,
+                max_time=max_time,
             )
             path, cancelled, error = dl.start()
-            
+
             if error:
                 logger.error(f"ISM download error: {error}")
                 console.print(f"[red]Download error: {error}")
@@ -132,7 +135,7 @@ def handle_direct_download(args) -> bool:
     if cancelled:
         console.print("[yellow]Download cancelled.")
     elif path:
-        console.print(f"\n[green]Saved → {path}")
+        logger.info(f"Download completed: {path}")
     else:
         console.print("[red]Download failed.")
 

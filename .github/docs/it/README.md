@@ -234,6 +234,10 @@ Tutte le impostazioni si trovano in `config.json`. Le sezioni seguenti descrivon
 | `%(language)` | Lingue audio |
 | `%(video_codec)` | Codec video |
 | `%(audio_codec)` | Codec audio |
+| `%(original_title)` | Titolo in lingua originale (richiede API key TMDB) |
+| `%(original_language)` | Codice lingua originale, es. `ja` (richiede API key TMDB) |
+| `%(tmdb_id)` | ID TMDB (richiede API key TMDB) |
+| `%(imdb_id)` | ID IMDb, es. `tt0409591` (richiede API key TMDB) |
 
 ---
 
@@ -256,18 +260,25 @@ S%(season:02d)/     →  cartella stagione  S01/
 | `%(episode:FORMAT)` | Numero episodio con padding inline (vedi sotto) |
 | `%(episode_name)` | Titolo episodio (normalizzato) |
 | `%(episode_name_slug)` | Titolo episodio come slug |
+| `%(absolute:FORMAT)` | Numero episodio assoluto con padding inline — solo anime (AnimeUnity/AnimeWorld) |
 | `%(quality)` | Risoluzione video |
 | `%(language)` | Lingue audio |
 | `%(video_codec)` | Codec video |
 | `%(audio_codec)` | Codec audio |
+| `%(original_title)` | Titolo in lingua originale (richiede API key TMDB) |
+| `%(original_language)` | Codice lingua originale, es. `ja` (richiede API key TMDB) |
+| `%(tmdb_id)` | ID TMDB (richiede API key TMDB) |
+| `%(imdb_id)` | ID IMDb, es. `tt0409591` (richiede API key TMDB) |
 
-**Sintassi padding inline (per `season` e `episode`):**
+**Sintassi padding inline (per `season`, `episode` e `absolute`):**
 
 | Token | Risultato (n=1) | Descrizione |
 |-------|-----------------|-------------|
 | `%(season:02d)` | `01` | Zero-padding a 2 cifre |
 | `%(season:03d)` | `001` | Zero-padding a 3 cifre |
 | `%(season:d)` | `1` | Nessun padding |
+
+> I token che non possono essere risolti (es. token TMDB senza API key, oppure `%(absolute)` su servizi non-anime) vengono rimossi dal nome file insieme agli eventuali wrapper `[]`/`()` circostanti, così non restano mai come testo letterale.
 
 ---
 

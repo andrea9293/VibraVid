@@ -25,7 +25,7 @@ def _render_bar(percent: int, length: int = 10) -> str:
     return f"{bar} [dim]{percent:3d}%[/dim]"
 
 
-def run_with_progress(cmd: list, label: str, encrypted_path: str, output_path: str, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None, timeout_seconds: Optional[int] = 1800) -> tuple:
+def run_with_progress(cmd: list, label: str, encrypted_path: str, output_path: str, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None, timeout_seconds: Optional[int] = 1800, status: Optional[str] = None) -> tuple:
     """
     Launch *cmd* as a subprocess and monitor its progress by watching how
     fast the *output_path* file grows relative to *encrypted_path*.
@@ -55,6 +55,7 @@ def run_with_progress(cmd: list, label: str, encrypted_path: str, output_path: s
                 {
                     "task_key": task_key,
                     "label": label,
+                    "status": status,
                     "pct": percent,
                     "segments": f"{percent}/100",
                     "compact_metrics": True,

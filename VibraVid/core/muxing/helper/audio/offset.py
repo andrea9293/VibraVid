@@ -53,9 +53,13 @@ def _to_mono(data, channel: int = 0):
 
 def detect_audio_offset(reference_path: str, target_path: str, max_offset_seconds: float = 30.0, sample_rate: int = 8000, mono_channel: int = 0) -> Optional[float]:
     """Detect the time offset between two audio files by cross-correlating mono WAV extracts."""
-    import numpy as np
-    from scipy.io import wavfile
-    from scipy.signal import correlate
+    try:
+        import numpy as np
+        from scipy.io import wavfile
+        from scipy.signal import correlate
+    except ImportError:
+        logger.warning("detect_audio_offset: scipy/numpy not available, skipping offset detection")
+        return None
 
     tmp_dir = tempfile.mkdtemp(prefix="vv_offset_")
     try:

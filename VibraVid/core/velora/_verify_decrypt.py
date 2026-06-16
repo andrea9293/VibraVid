@@ -110,83 +110,24 @@ def _mp4dump_clean(mp4dump: str, file_path: str) -> Tuple[bool, str]:
     return True, "no residual encryption boxes"
 
 
-def _scan_mp4_boxes_for_encryption(file_path: str, max_bytes: int = 4 * 1024 * 1024) -> Tuple[bool, str]:
-    """
-    Lightweight, dependency-free scan: read up to *max_bytes* of the file and
-    look for fully-decrypted hallmarks (no [encv]/[enca]/[sinf]/[saiz]/[saio]/[senc]
-    boxes inside moov/moof) without invoking external tools.
-    """
-    try:
-        with open(file_path, "rb") as fh:
-            data = fh.read(max_bytes)
-    except Exception as exc:
-        return True, f"box scan skipped: {exc}"
-
-    if not data:
-        return True, "box scan skipped: empty"
-
-    encryption_types = {b"encv", b"enca", b"sinf", b"saiz", b"saio", b"senc"}
-    found = set()
-    pos = 0
-    end = len(data)
-    while pos + 8 <= end:
-        size = int.from_bytes(data[pos:pos + 4], "big")
-        type_ = data[pos + 4:pos + 8]
-        
-        if size == 1:
-            if pos + 16 > end:
-                break
-            size = int.from_bytes(data[pos + 8:pos + 16], "big")
-        
-        if size <= 0:
-            break
-
-        if type_ in encryption_types:
-            found.add(type_.decode("ascii"))
-
-        pos += size
-
-    if not found:
-        for marker in encryption_types:
-            if marker in data:
-                found.add(marker.decode("ascii"))
-
-    if found:
-        return False, f"residual encryption boxes detected: {','.join(sorted(found))}"
-    return True, "no residual encryption boxes (built-in scan)"
-
-
 def verify_decrypted_media(file_path) -> Tuple[bool, str]:
-    """
-    Verify that *file_path* is a playable, fully decrypted media file.
-    """
+    """Verify that *file_path* is a playable, fully decrypted media file."""
     p = Path(file_path)
     if not p.exists():
         return False, "output file missing"
-    
+
     if p.stat().st_size == 0:
         return False, "output file is empty"
 
-        
-    ffprobe_path = get_ffprobe_path()
-    mp4dump_path = get_mp4dump_path()
-
-    ok, ffprobe_msg = _ffprobe_streams(ffprobe_path, str(p))
+    ok, ffprobe_msg = _ffprobe_streams(get_ffprobe_path(), str(p))
     if not ok:
         return False, ffprobe_msg
 
-    mp4dump_msg = ""
+    mp4dump_path = get_mp4dump_path()
     if mp4dump_path:
         clean, mp4dump_msg = _mp4dump_clean(mp4dump_path, str(p))
         if not clean:
             return False, f"{ffprobe_msg}; {mp4dump_msg}"
-        if "skipped" not in mp4dump_msg:
-            return True, f"{ffprobe_msg}; {mp4dump_msg}"
+        return True, f"{ffprobe_msg}; {mp4dump_msg}"
 
-    # Fallback: built-in box scanner
-    clean, scan_msg = _scan_mp4_boxes_for_encryption(str(p))
-    if not clean:
-        return False, f"{ffprobe_msg}; {scan_msg}"
-    
-    detail = scan_msg if not mp4dump_msg else f"{mp4dump_msg}; {scan_msg}"
-    return True, f"{ffprobe_msg}; {detail}"
+    return True, ffprobe_msg

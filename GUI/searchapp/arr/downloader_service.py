@@ -824,13 +824,8 @@ class ArrDownloaderService:
         return self._unique_titles(titles)
 
     def _resolve_sonarr_title(self, title: str, series_id: Optional[int], tmdb_id: Optional[int] = None) -> List[str]:
-        """Build ordered Sonarr title candidates for VibraVid searches.
-
-        Starts with Sonarr's originalTitle and localized title, then adds TMDB
-        localized/alternative titles, a secondary Sonarr list lookup by
-        title/slug/originalTitle, and finally the title from the ARR item.
-        """
-        titles: List[Optional[str]] = []
+        """Build ordered Sonarr title candidates for VibraVid searches."""
+        titles: List[Optional[str]] = list(self._get_tmdb_title_candidates(tmdb_id, "tv"))
 
         if series_id:
             try:
@@ -841,11 +836,9 @@ class ArrDownloaderService:
                     f"[_resolve_sonarr_title] Sonarr title='{sonarr_title}', "
                     f"originalTitle='{sonarr_original}'"
                 )
-                titles.extend([sonarr_original, sonarr_title])
+                titles.extend([sonarr_title, sonarr_original])
             except Exception as exc:
                 logger.debug(f"Sonarr series lookup by ID {series_id} failed: {exc}")
-
-        titles.extend(self._get_tmdb_title_candidates(tmdb_id, "tv"))
 
         if not self._unique_titles(titles):
             # Secondary lookup: if direct lookup by ID and TMDB lookup are
@@ -858,7 +851,7 @@ class ArrDownloaderService:
                     s_slug = s.get("titleSlug", "").lower()
                     s_original = s.get("originalTitle", "").lower()
                     if title_lower in (s_title, s_slug, s_original):
-                        titles.extend([s.get("originalTitle"), s.get("title")])
+                        titles.extend([s.get("title"), s.get("originalTitle")])
                         break
             except Exception as exc:
                 logger.debug(f"Sonarr series list fallback failed: {exc}")
@@ -867,25 +860,18 @@ class ArrDownloaderService:
         return self._unique_titles(titles)
 
     def _resolve_radarr_title(self, title: str, movie_id: int, tmdb_id: Optional[int] = None) -> List[str]:
-        """Build ordered Radarr title candidates for VibraVid searches.
-
-        Starts with Radarr's originalTitle and localized title, then adds TMDB
-        localized/alternative titles and finally the title from the ARR item.
-        This replaces the old single-title behavior while keeping the original
-        resolver name for callers.
-        """
-        titles: List[Optional[str]] = []
+        """Build ordered Radarr title candidates for VibraVid searches."""
+        titles: List[Optional[str]] = list(self._get_tmdb_title_candidates(tmdb_id, "movie"))
 
         try:
             movie = self.radarr.get_movie_by_id(movie_id)
             original = movie.get("originalTitle")
             radarr_title = movie.get("title")
             logger.info(f"[_resolve_radarr_title] Radarr title='{radarr_title}', originalTitle='{original}'")
-            titles.extend([original, radarr_title])
+            titles.extend([radarr_title, original])
         except Exception as exc:
             logger.debug(f"Radarr movie lookup by ID {movie_id} failed: {exc}")
 
-        titles.extend(self._get_tmdb_title_candidates(tmdb_id, "movie"))
         titles.append(title)
         return self._unique_titles(titles)
 

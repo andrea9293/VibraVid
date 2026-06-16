@@ -135,8 +135,12 @@ class HLSParser:
                             except Exception:
                                 stream.is_live = False
 
-                        streams.append(stream)
-                        logger.info(f"HLS add | {stream}")
+                        # Skip duplicates: the same video variant (STABLE-VARIANT-ID)
+                        # is listed once per audio group, producing identical-codec entries.
+                        if stream.id not in seen_ids:
+                            seen_ids.add(stream.id)
+                            streams.append(stream)
+                            logger.info(f"HLS add | {stream}")
                 i += 2
                 continue
 

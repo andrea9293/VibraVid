@@ -84,7 +84,6 @@ class ExternalSupaDBVault:
             response.raise_for_status()
             result = response.json()
 
-            logger.info(f"Supabase track_download response: {result}")
             return bool(result.get("success", False))
 
         except Exception as e:

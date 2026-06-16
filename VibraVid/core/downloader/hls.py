@@ -66,8 +66,8 @@ class HLS_Downloader(BaseDownloader):
         self.key = key
         
         self.cookies = cookies or {}
-        self.max_segments = max_segments
-        self.max_time = _parse_max_time(max_time)
+        self.max_segments = max_segments if max_segments is not None else context_tracker.max_segments
+        self.max_time = _parse_max_time(max_time if max_time is not None else context_tracker.max_time)
         self.other_tracks = other_tracks or []
         logger.info(f"Initialized HLS_Downloader with URL: {self.m3u8_url}, License URL: {self.license_url}, DRM Pref: {self.drm_preference}, Max Segments: {self.max_segments}, Max Time: {self.max_time}")
 

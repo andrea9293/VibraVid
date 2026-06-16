@@ -1,6 +1,7 @@
 # 09.04.26
 
 import logging
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -46,6 +47,34 @@ def _emit_live_progress(bar_manager, task_key: str, seg_done: int, total_bytes: 
     })
 
 
+def _reset_live_timestamps(out_path: Path) -> None:
+    """Rewrite *out_path* in place (stream-copy) so presentation timestamps start at 0."""
+    from VibraVid.setup import get_ffmpeg_path
+
+    # Keep the original extension so ffmpeg can infer the output container.
+    tmp = out_path.with_name(f"{out_path.stem}.tsreset{out_path.suffix}")
+    cmd = [
+        get_ffmpeg_path(),
+        "-fflags", "+genpts+igndts+discardcorrupt",
+        "-avoid_negative_ts", "make_zero",
+        "-i", str(out_path),
+        "-c", "copy",
+        "-y", str(tmp),
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+            logger.warning(f"Live DASH: timestamp reset skipped (ffmpeg rc={result.returncode}) — keeping original {out_path.name}")
+            tmp.unlink(missing_ok=True)
+            return
+        tmp.replace(out_path)
+        logger.info(f"Live DASH: reset timestamps to zero -> {out_path.name}")
+    except Exception as exc:
+        logger.warning(f"Live DASH: timestamp reset failed ({exc}) — keeping original {out_path.name}")
+        tmp.unlink(missing_ok=True)
+
+
 def _emit_merge_progress(bar_manager, task_key: str, seg_done: int, merge_size: int) -> None:
     bar_manager.handle_progress_line({
         "task_key": task_key,
@@ -65,6 +94,7 @@ class LiveDownloadMixin:
             progress_cb=progress_cb,
             stream=stream,
             event_cb=None,
+            default_ext="mp4",
         )
 
         # Reconstruct the expected path for each entry in dl_batch.
@@ -400,7 +430,7 @@ class LiveDownloadMixin:
             nonlocal init_path
             if is_init:
                 init_path = fp
-                logger.info(f"Live DASH: init segment cached -> {fp.name}")
+                logger.debug(f"Live DASH: init segment cached -> {fp.name}")
                 return True
 
             if not _decryptor or not self.key:
@@ -452,6 +482,7 @@ class LiveDownloadMixin:
                 progress_cb=progress_cb,
                 stream=stream,
                 event_cb=None,
+                default_ext="mp4",
             )
             ordered: List[Path] = []
             for seg in dl_batch:
@@ -465,7 +496,9 @@ class LiveDownloadMixin:
         def _fetch_and_parse_mpd() -> Tuple[Optional[List], float, bool]:
             nonlocal min_update_period
             try:
-                parser = DashParser(mpd_url, headers=headers)
+                # quiet=True: the live loop re-parses the MPD every few seconds;
+                # without it the full stream list is re-logged on every poll.
+                parser = DashParser(mpd_url, headers=headers, quiet=True)
                 if not parser.fetch_manifest():
                     return None, min_update_period, False
                 
@@ -690,6 +723,9 @@ class LiveDownloadMixin:
         binary_merge_segments(all_paths, out_path, merge_logger=logger)
 
         if out_path.exists() and out_path.stat().st_size > 0:
+            # Live fMP4 carries epoch-based timestamps — normalise to start at 0
+            # so duration probes and the downstream mux behave sanely.
+            _reset_live_timestamps(out_path)
             logger.info(f"Live DASH merge complete | segs={len(all_paths)} -> {out_path.name} ({_fmt_size(out_path.stat().st_size)})")
         else:
             logger.error(f"Live DASH binary merge produced an empty file: {out_path}")

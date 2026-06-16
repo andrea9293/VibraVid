@@ -214,8 +214,8 @@ class DASH_Downloader(BaseDownloader):
         self.drm_preference = drm_preference
         self.key = key
         self.cookies = cookies or {}
-        self.max_segments = max_segments
-        self.max_time = _parse_max_time(max_time)
+        self.max_segments = max_segments if max_segments is not None else context_tracker.max_segments
+        self.max_time = _parse_max_time(max_time if max_time is not None else context_tracker.max_time)
         self.drm_manager = DRMManager(
             get_wvd_path(),
             get_prd_path(),
@@ -263,7 +263,8 @@ class DASH_Downloader(BaseDownloader):
                     continue
 
             label = _stream_drm_label(s)
-            logger.info(f"DASH DRM collected from stream: {s.id or 'unnamed'} | type={s.type} | encrypted={is_encrypted} | selected={is_selected}")
+            collected_kids: set = set()
+            collected_dts: list = []
 
             for dt in drm.get_all_drm_types():  # DRMType.WIDEVINE, DRMType.PLAYREADY, DRMType.FAIRPLAY, DRMType.UNKNOWN
                 if dt not in result:
@@ -290,6 +291,7 @@ class DASH_Downloader(BaseDownloader):
                     logger.warning("No PSSH found for this stream's DRM, skipping...")
                     continue
 
+                dt_added = False
                 for pssh in psshs:
                     for kid in kids:
                         dedup_key = (pssh, kid)
@@ -297,7 +299,11 @@ class DASH_Downloader(BaseDownloader):
                             continue
 
                         seen[dt].add(dedup_key)
-                        logger.info(f"  → PSSH added for {dt}: KID={kid}")
+                        collected_kids.add(kid)
+                        if not dt_added:
+                            collected_dts.append(str(dt))
+                            dt_added = True
+                        
                         result[dt].append(
                             {
                                 "pssh": pssh,
@@ -306,6 +312,11 @@ class DASH_Downloader(BaseDownloader):
                                 "label": label,
                             }
                         )
+
+            if collected_kids:
+                kid_str = ", ".join(sorted(collected_kids))
+                dt_str = "+".join(collected_dts)
+                logger.info(f"DASH DRM collected from stream: {s.id or 'unnamed'} | type={s.type} | KID={kid_str} | {dt_str}")
 
         return result
 

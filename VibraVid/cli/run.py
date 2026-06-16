@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from VibraVid.utils import config_manager, start_message, setup_logger, get_log_file_path
+from VibraVid.core.ui.tracker import context_tracker
 from VibraVid.services._base import load_search_functions
 from VibraVid.utils.hooks import execute_hooks, get_last_hook_context
 from VibraVid.upload import git_update, binary_update
@@ -123,6 +124,8 @@ def setup_argument_parser(search_functions):
     dl_group.add_argument('--license-headers', dest='license_headers', action='append', metavar='Key:Value', help='HTTP header for DRM license request. Repeatable.')
     dl_group.add_argument('--key', action='append', metavar='KID:KEY', help='Decryption key in KID:KEY hex format. Repeatable.')
     dl_group.add_argument('--drm', choices=['widevine', 'playready', 'auto'], default='auto', help='DRM system (default: auto)')
+    dl_group.add_argument('--max-segments', dest='max_segments', type=int, default=None, metavar='N', help='Limit download to first N segments (HLS/DASH/ISM)')
+    dl_group.add_argument('--max-time', dest='max_time', type=str, default=None, metavar='HH:MM:SS|SEC', help='Limit downloaded duration, e.g. "00:05:00" or 300 (HLS/DASH/ISM)')
 
     # ── Utility
     util_group = parser.add_argument_group('Utility')
@@ -168,7 +171,6 @@ def apply_config_updates(args):
         config_manager.config.set_key(section, option, value)
 
     if persistent_updates:
-        logger.info(f"Applying persistent config updates: {persistent_updates}")
         config_manager.save_config()
 
 
@@ -377,6 +379,10 @@ def main():
             return
 
         apply_config_updates(args)
+
+        # Propagate CLI download limits to the service flow
+        context_tracker.max_segments = getattr(args, 'max_segments', None)
+        context_tracker.max_time = getattr(args, 'max_time', None)
 
         # ── Direct download (--down) — handled before interactive site selection ──
         if handle_direct_download(args):

@@ -307,7 +307,6 @@ def get_my_location() -> dict:
                 os.makedirs(cache_dir, exist_ok=True)
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(location, f, indent=4)
-                logger.info(f"Location data cached to {cache_file}")
             except Exception as e:
                 logger.warning(f"Could not cache location data: {e}")
 

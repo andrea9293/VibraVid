@@ -438,6 +438,22 @@ class ContextTracker:
         self.local.output_path = value
 
     @property
+    def max_segments(self):
+        return getattr(self.local, 'max_segments', None)
+
+    @max_segments.setter
+    def max_segments(self, value):
+        self.local.max_segments = value
+
+    @property
+    def max_time(self):
+        return getattr(self.local, 'max_time', None)
+
+    @max_time.setter
+    def max_time(self, value):
+        self.local.max_time = value
+
+    @property
     def should_print(self) -> bool:
         """Returns False when console output should be suppressed (parallel CLI or GUI)."""
         return not self.is_gui and not self.is_parallel_cli

@@ -9,7 +9,7 @@ from rich.console import Console
 
 from VibraVid.utils import config_manager, os_manager
 from VibraVid.utils.http_client import create_client, get_headers
-from VibraVid.core.ui.tracker import download_tracker
+from VibraVid.core.ui.tracker import download_tracker, context_tracker
 from VibraVid.core.ui.bar_manager import DownloadBarManager
 
 from VibraVid.core.velora.download_utils import parse_max_time as _parse_max_time
@@ -85,8 +85,8 @@ class Generic_Downloader(BaseDownloader):
         """
         self.sources = [dict(s or {}) for s in (sources or [])]
         self.cookies = cookies or {}
-        self.max_segments = max_segments
-        self.max_time = _parse_max_time(max_time)
+        self.max_segments = max_segments if max_segments is not None else context_tracker.max_segments
+        self.max_time = _parse_max_time(max_time if max_time is not None else context_tracker.max_time)
         self.custom_filters = custom_filters or {}
         self._active: List[Tuple[MediaDownloader, Dict[str, Any]]] = []
         self._dv_stream = None

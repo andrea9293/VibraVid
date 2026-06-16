@@ -635,7 +635,7 @@ class StreamSelector:
     def _select_video(self, streams: list, spec: FilterSpec) -> SelectionResult:
         result = SelectionResult(select_best=spec.select_best, extra=dict(spec.extra))
         videos = [s for s in streams if getattr(s, "type", "") == "video"]
-        logger.info(f"Video available: {[f'{_height(s)}p/{_codecs(s)}' for s in videos]} | filter: id={spec.id} res={spec.res} codec={spec.codec} all={spec.select_all} drop={spec.drop} default={spec.select_default}")
+        logger.debug(f"Video available: {[f'{_height(s)}p/{_codecs(s)}' for s in videos]} | filter: id={spec.id} res={spec.res} codec={spec.codec} all={spec.select_all} drop={spec.drop} default={spec.select_default}")
 
         if spec.drop or not videos:
             result.drop = True
@@ -714,7 +714,7 @@ class StreamSelector:
     def _select_audio(self, streams: list, spec: FilterSpec) -> SelectionResult:
         result = SelectionResult(select_best=spec.select_best, extra=dict(spec.extra))
         audios = [s for s in streams if getattr(s, "type", "") == "audio"]
-        logger.info(f"Audio available: {[f'{_language(s)}({_resolved_language(s)})/{_codecs(s)}' for s in audios]} | filter: id={spec.id} lang={spec.langs} codec={spec.codec} all={spec.select_all} drop={spec.drop} default={spec.select_default}")
+        logger.debug(f"Audio available: {[f'{_language(s)}({_resolved_language(s)})/{_codecs(s)}' for s in audios]} | filter: id={spec.id} lang={spec.langs} codec={spec.codec} all={spec.select_all} drop={spec.drop} default={spec.select_default}")
 
         if spec.drop or not audios:
             result.drop = True
@@ -815,7 +815,7 @@ class StreamSelector:
     def _select_subtitle(self, streams: list, spec: FilterSpec) -> SelectionResult:
         result = SelectionResult(select_best=spec.select_best, extra=dict(spec.extra))
         subs = [s for s in streams if getattr(s, "type", "") == "subtitle"]
-        logger.info(f"Subtitle available: {[f'{_language(s)}({_resolved_language(s)})' for s in subs]} | filter: id={spec.id} lang={spec.langs} all={spec.select_all} drop={spec.drop} default={spec.select_default}")
+        logger.debug(f"Subtitle available: {[f'{_language(s)}({_resolved_language(s)})' for s in subs]} | filter: id={spec.id} lang={spec.langs} all={spec.select_all} drop={spec.drop} default={spec.select_default}")
 
         if spec.drop or not subs:
             result.drop = True

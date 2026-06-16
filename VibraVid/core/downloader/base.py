@@ -22,7 +22,7 @@ from VibraVid.setup import get_ffmpeg_path
 
 from VibraVid.core.velora._verify_decrypt import verify_decrypted_media
 from VibraVid.core.muxing.helper.video_hybrid import download_other_tracks
-from VibraVid.cli.run import execute_hooks
+from VibraVid.utils.hooks import execute_hooks
 
 
 console = Console()
@@ -78,6 +78,10 @@ class BaseDownloader:
         self.output_path = os_manager.get_sanitize_path(output_path)
         if not self.output_path.endswith(f".{EXTENSION_OUTPUT}"):
             self.output_path += f".{EXTENSION_OUTPUT}"
+
+        # Media-token placeholders (quality/codec/language) can only be resolved AFTER muxing (see _finalize).
+        self._final_name_template = self.output_path
+        self.output_path = self._strip_media_tokens(self.output_path)
 
         self.filename_base = os.path.splitext(os.path.basename(self.output_path))[0]
         self.output_dir = os.path.join(
@@ -339,7 +343,7 @@ class BaseDownloader:
                 out_path=self.output_path,
             )
             self.last_merge_result = result_json
-            return merged_file if os.path.exists(merged_file) else None
+            return merged_file if self._merge_output_ok(merged_file) else None
 
         current_file = video_path
 
@@ -360,6 +364,11 @@ class BaseDownloader:
 
         return current_file
 
+    @staticmethod
+    def _merge_output_ok(path: str) -> bool:
+        """A merge step only succeeded if ffmpeg produced a non-empty file"""
+        return bool(path) and os.path.exists(path) and os.path.getsize(path) > 0
+
     def _merge_audio_tracks(self, current_file: str, audio_tracks: list) -> str:
         """Merge audio tracks into the video file. Returns the resulting file path (or original on failure)."""
         console.print(f"[cyan]\nMerging [red]{len(audio_tracks)} [cyan]audio track(s)...")
@@ -372,10 +381,10 @@ class BaseDownloader:
             out_path=audio_output,
         )
         self.last_merge_result = result_json
-        if os.path.exists(merged_file):
+        if self._merge_output_ok(merged_file):
             return merged_file
 
-        logger.error(f"Audio merge failed (ffmpeg exit_code={(result_json or {}).get('exit_code')}); output not created: {merged_file}")
+        logger.error(f"Audio merge failed (ffmpeg exit_code={(result_json or {}).get('exit_code')}); output missing or empty: {merged_file}")
         console.print("[yellow]Audio merge failed, continuing with video only")
         return current_file
 
@@ -395,9 +404,10 @@ class BaseDownloader:
             out_path=sub_output,
         )
         self.last_merge_result = result_json
-        if os.path.exists(merged_file):
+        if self._merge_output_ok(merged_file):
             return merged_file
-        
+
+        logger.error(f"Subtitle merge failed (ffmpeg exit_code={(result_json or {}).get('exit_code')}); output missing or empty: {merged_file}")
         console.print("[yellow]Subtitle merge failed, continuing without subtitles")
         return current_file
 
@@ -527,51 +537,61 @@ class BaseDownloader:
         except Exception as exc:
             logger.warning(f"Output verification skipped due to error: {exc}")
 
+    # Tokens whose value is only known after probing the muxed file.
+    _MEDIA_PLACEHOLDERS = ("%(quality)", "%(language)", "%(video_codec)", "%(audio_codec)")
+
+    @classmethod
+    def _strip_media_tokens(cls, path: str) -> str:
+        """Remove unresolved media-token placeholders from *path*"""
+        root, ext = os.path.splitext(path)
+        for ph in cls._MEDIA_PLACEHOLDERS:
+            root = root.replace(f" [{ph}]", "").replace(f"[{ph}]", "")
+            root = root.replace(f" ({ph})", "").replace(f"({ph})", "")
+            root = root.replace(ph, "")
+        root = root.replace("  ", " ").rstrip(" .")
+        return root + ext
+
     def _finalize(self, *, final_file: str) -> None:
         """Common tail for start(): move to final location."""
         if final_file and os.path.exists(final_file):
             self._move_to_final_location(final_file)
 
-        dynamic_placeholders = ["%(quality)", "%(language)", "%(video_codec)", "%(audio_codec)"]
-        if any(p in self.output_path for p in dynamic_placeholders):
+        # The working file was downloaded/muxed under a clean name (media tokens stripped).
+        template = getattr(self, "_final_name_template", self.output_path)
+        if any(p in template for p in self._MEDIA_PLACEHOLDERS):
             try:
                 metadata = get_media_metadata(self.output_path)
                 logger.info(f"Metadata for dynamic rename: {metadata}")
-                
-                new_path = self.output_path
+
                 replacements = {
                     "quality": metadata.get("quality", ""),
                     "language": metadata.get("language", ""),
                     "video_codec": metadata.get("video_codec", ""),
                     "audio_codec": metadata.get("audio_codec", "")
                 }
-                
+
+                # Resolve placeholders on the template's name root
+                new_root = os.path.splitext(template)[0]
+                cur_ext  = os.path.splitext(self.output_path)[1]
+
                 for key, val in replacements.items():
                     placeholder = f"%({key})"
                     if val:
-                        new_path = new_path.replace(placeholder, str(val))
+                        new_root = new_root.replace(placeholder, str(val))
                     else:
-                        new_path = new_path.replace(f"[{placeholder}]", "").replace(f"({placeholder})", "").replace(placeholder, "")
+                        new_root = new_root.replace(f"[{placeholder}]", "").replace(f"({placeholder})", "").replace(placeholder, "")
 
-                new_path = new_path.replace("  ", " ").replace(" .", ".").strip()
-                
+                new_root = new_root.replace("  ", " ").rstrip(" .")
+                new_path = new_root + cur_ext
+
                 if new_path != self.output_path:
                     new_dir = os.path.dirname(new_path)
-                    old_path = self.output_path
-                    
                     if not os.path.exists(new_dir):
                         os.makedirs(new_dir, exist_ok=True)
-                        
-                    os.rename(old_path, new_path)
-                    
-                    old_dir = os.path.dirname(old_path)
-                    if old_dir != new_dir and os.path.exists(old_dir):
-                        try:
-                            if not os.listdir(old_dir) and any(p in old_dir for p in dynamic_placeholders):
-                                os.rmdir(old_dir)
-                        except Exception:
-                            pass
 
+                    # os.replace (not os.rename) so re-downloading an existing
+                    # episode overwrites it instead of raising on Windows.
+                    os.replace(self.output_path, new_path)
                     self.output_path = new_path
                     logger.info(f"Dynamic rename applied: {self.output_path}")
 

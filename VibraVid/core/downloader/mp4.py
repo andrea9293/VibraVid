@@ -15,7 +15,7 @@ from rich.progress import Progress, TextColumn
 
 from VibraVid.utils.http_client import create_client, get_userAgent
 from VibraVid.utils import config_manager, os_manager, internet_manager
-from VibraVid.cli.run import execute_hooks
+from VibraVid.utils.hooks import execute_hooks
 from VibraVid.core.ui.progress_bar import CustomBarColumn
 from VibraVid.core.ui.tracker import download_tracker, context_tracker
 from VibraVid.core.ui.bar_manager import DownloadBarManager

@@ -85,7 +85,7 @@ class ConfigAccessor:
 
         if key not in self._config_dict[section]:
             if default is not _MISSING:
-                logger.info(f"Key '{key}' not found in section '{section}' of {self._cache_prefix} configuration, returning default.")
+                logger.debug(f"Key '{key}' not found in section '{section}' of {self._cache_prefix} configuration, returning default.")
                 return default
 
             # Same one-time repair guard as above

@@ -138,73 +138,6 @@ def parse_json_dump(text: Optional[str]) -> EncryptionInfo:
     return info
 
 
-def parse_text_dump(text: Optional[str]) -> EncryptionInfo:
-    """Parse the plaintext output of ``mp4dump`` into an :class:`EncryptionInfo`."""
-    if not text:
-        return EncryptionInfo()
-
-    info = EncryptionInfo()
-
-    def _normalize_spaces(line: str) -> str:
-        return re.sub(
-            r"(?<!\S)((?:\S )+\S)(?!\S)",
-            lambda m: m.group(0).replace(" ", ""),
-            line,
-        )
-
-    normalized = "\n".join(_normalize_spaces(line) for line in text.splitlines())
-
-    pssh_blocks = re.findall(
-        r"\[pssh\].*?system_id\s*=\s*\[([0-9a-f\s]+)\].*?data_size\s*=\s*(\d+)",
-        normalized,
-        re.IGNORECASE | re.DOTALL,
-    )
-    for sid_raw, data_size in pssh_blocks:
-        sid = sid_raw.replace(" ", "").lower()
-        info.pssh_boxes.append({"system_id": sid, "data_size": int(data_size)})
-        info.encrypted = True
-
-    scheme_match = re.search(r"scheme_type\s*=\s*[\"']?(\w+)[\"']?", normalized, re.IGNORECASE)
-    if scheme_match:
-        info.scheme    = scheme_match.group(1).lower()
-        info.encrypted = True
-
-    kid_match = re.search(
-        r"\[tenc\].*?default_KID\s*=\s*\[([0-9a-f\s]+)\]",
-        normalized,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if kid_match:
-        info.kid       = _clean_kid(kid_match.group(1))
-        info.encrypted = True
-
-    crypt_match = re.search(r"default_crypt_byte_block\s*=\s*(\d+)", normalized, re.IGNORECASE)
-    skip_match  = re.search(r"default_skip_byte_block\s*=\s*(\d+)",  normalized, re.IGNORECASE)
-    if crypt_match and skip_match:
-        if int(crypt_match.group(1)) > 0 and int(skip_match.group(1)) > 0:
-            info.encryption_method = "SAMPLE_AES"
-
-    codec_match = re.search(
-        r"\[encv\].*?original_format\s*=\s*(\w+)", normalized, re.IGNORECASE | re.DOTALL
-    )
-    if codec_match:
-        codec_raw        = codec_match.group(1)
-        info.video_codec = VIDEO_CODEC_MAP.get(codec_raw, codec_raw)
-
-    for marker in (r"\[sinf\]", r"\[saio\]", r"\[saiz\]"):
-        if re.search(marker, normalized, re.IGNORECASE):
-            info.encrypted = True
-            break
-
-    # Apple FairPlay SAMPLE-AES
-    if not info.encrypted and re.search(r"\[4snf\]", normalized, re.IGNORECASE):
-        info.encrypted = True
-        info.scheme = "fps"
-        info.encryption_method = "SAMPLE_AES"
-
-    return info
-
-
 def parse_binary(file_path: str) -> EncryptionInfo:
     """
     Last-resort parser: scan the first 2 MB of *file_path* for raw CENC/PSSH
@@ -268,17 +201,14 @@ def parse_binary(file_path: str) -> EncryptionInfo:
 
 def detect_encryption_info(mp4dump_path: str, file_path: str) -> EncryptionInfo:
     """
-    Try to detect encryption metadata using three strategies in order:
-    JSON mp4dump → text mp4dump → raw binary scan.
+    Detect encryption metadata via ``mp4dump`` JSON, falling back to a raw binary scan only if mp4dump yields nothing.
 
     Returns the first successful result, or a blank :class:`EncryptionInfo`
     if the file appears clear.
     """
-    for parse_fn, fmt in ((parse_json_dump, "json"), (parse_text_dump, "text")):
-        raw = run_mp4dump(mp4dump_path, file_path, fmt=fmt)
-        info = parse_fn(raw)
-        if info.encrypted:
-            return _finalize(info)
+    info = parse_json_dump(run_mp4dump(mp4dump_path, file_path, fmt="json"))
+    if info.encrypted:
+        return _finalize(info)
 
     info = parse_binary(file_path)
     if info.encrypted:

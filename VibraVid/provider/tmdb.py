@@ -202,6 +202,26 @@ class TMDBClient:
         logger.info(f"No IMDb ID found for {media_type} TMDB ID {tmdb_id}")
         return None
 
+    def get_original_title(self, tmdb_id: int, media_type: str, language_preference: str = "it"):
+        """Return the original-language title for a movie or TV entry."""
+        details = self._make_request(f"{media_type}/{tmdb_id}", {"language": language_preference})
+        original = details.get("original_title") if media_type == "movie" else details.get("original_name")
+        if original:
+            return original
+
+        logger.info(f"No original title found for {media_type} TMDB ID {tmdb_id}")
+        return None
+
+    def get_original_language(self, tmdb_id: int, media_type: str, language_preference: str = "it"):
+        """Return the ISO 639-1 original language code for a movie or TV entry."""
+        details = self._make_request(f"{media_type}/{tmdb_id}", {"language": language_preference})
+        original_language = details.get("original_language")
+        if original_language:
+            return original_language
+
+        logger.info(f"No original language found for {media_type} TMDB ID {tmdb_id}")
+        return None
+
     def search_movie(self, query: str):
         """Search for a movie and return the TMDB ID of the first result."""
         results = self._make_request("search/movie", {"query": query, "language": "it"}).get("results", [])

@@ -10,6 +10,17 @@ logger = logging.getLogger(__name__)
 
 # Streaming buffer for raw (non-gzip) segment copies, so a segment is never fully materialised in memory.
 _COPY_BUFSIZE = 1024 * 1024
+_PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+_PNG_SCAN_WINDOW = 64 * 1024
+
+
+def _find_ts_start(buf: bytes) -> int:
+    """Return the offset of the first MPEG-TS packet inside a PNG-wrapped segment."""
+    limit = len(buf) - 188 * 4
+    for k in range(0, max(0, limit)):
+        if buf[k] == 0x47 and all(buf[k + n * 188] == 0x47 for n in range(1, 5)):
+            return k
+    return 0
 
 
 def _merge_fmt_size(nb: int) -> str:
@@ -34,7 +45,6 @@ def _segment_number(path: Path) -> int:
 
 def binary_merge_segments(paths: list[Path], output_path: Path, merge_logger: logging.Logger | None = None) -> None:
     """Merge downloaded segments using direct raw binary concatenation."""
-    logger.info("Binary merge v2 ...")
     log = merge_logger or logger
 
     # Single stat() per path: reused for both the size filter and total accounting.
@@ -52,15 +62,15 @@ def binary_merge_segments(paths: list[Path], output_path: Path, merge_logger: lo
         log.error("[binary_merge] No valid segments found")
         return
 
-    log.info(f"[binary_merge] raw concat {len(valid)} segments -> {output_path.name}")
     total_written = 0
     with open(output_path, "wb") as out_f:
+        png_wrapped = 0
         for seg_path, _, seg_size in valid:
             with open(seg_path, "rb") as in_f:
-                head = in_f.read(2)
+                head = in_f.read(8)
 
                 # gzip-compressed segment (magic bytes 1f 8b): the whole segment must be held in memory to decompress it.
-                if head == b'\x1f\x8b':
+                if head[:2] == b'\x1f\x8b':
                     try:
                         log.info(f"[binary_merge] detected gzip-compressed segment: {seg_path.name}, decompressing ...")
                         data = gzip.decompress(head + in_f.read())
@@ -74,10 +84,32 @@ def binary_merge_segments(paths: list[Path], output_path: Path, merge_logger: lo
                         total_written += seg_size
                         continue
 
+                # PNG-wrapped segment: a fake image cover hides the real MPEG-TS payload.
+                if head == _PNG_SIGNATURE:
+                    prefix = head + in_f.read(_PNG_SCAN_WINDOW - len(head))
+                    ts_off = _find_ts_start(prefix)
+                    if ts_off > 0:
+                        png_wrapped += 1
+                        out_f.write(prefix[ts_off:])
+                        shutil.copyfileobj(in_f, out_f, _COPY_BUFSIZE)
+                        
+                        # Written = (prefix after the wrapper) + (streamed tail past the scan window).
+                        total_written += (len(prefix) - ts_off) + (seg_size - len(prefix))
+                        continue
+
+                    log.warning(f"[binary_merge] PNG-wrapped segment {seg_path.name} has no TS sync, using raw data")
+                    out_f.write(prefix)
+                    shutil.copyfileobj(in_f, out_f, _COPY_BUFSIZE)
+                    total_written += seg_size
+                    continue
+
                 # Raw segment: stream in fixed-size blocks instead of loading it whole.
                 out_f.write(head)
                 shutil.copyfileobj(in_f, out_f, _COPY_BUFSIZE)
                 total_written += seg_size
+
+    if png_wrapped:
+        log.info(f"[binary_merge] stripped PNG wrapper from {png_wrapped}/{len(valid)} segment(s)")
 
     if output_path.exists() and output_path.stat().st_size > 0:
         log.info(f"[binary_merge] raw concat OK: {output_path.name} ({_merge_fmt_size(total_written)})")

@@ -90,16 +90,8 @@ class DRMManager:
         ]
 
         if key:
-            manual_keys = []
-            key_entries = key.split("|") if isinstance(key, str) else key
-            
-            for entry in key_entries:
-                parts = entry.split(":")
-                if len(parts) == 2:
-                    logger.info(f"Using manual {drm_type} key override for KID {parts[0].strip()}")
-                    kid_val = parts[0].replace("-", "").strip()
-                    key_val = parts[1].replace("-", "").strip()
-                    manual_keys.append(f"{kid_val}:{key_val}")
+            manual = KeysManager(key)
+            manual_keys = manual.get_keys_list()
             
             if manual_keys:
                 missing = self._missing_kids(all_kids, manual_keys)
@@ -133,7 +125,6 @@ class DRMManager:
         vault_source = None
 
         if self._vaults and base_license_url and all_kids:
-            logger.info(f"Looking up {len(all_kids)} {drm_type} KID(s) across {len(self._vaults)} vault(s)")
             found_keys, vault_source = self._db_lookup(all_kids, base_license_url, drm_type, pssh_val)
             vault_keys = list(set(found_keys))
 

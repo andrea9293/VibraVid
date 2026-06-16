@@ -36,12 +36,9 @@ def get_playready_keys(pssh_list: list[dict], license_url: str, cdm_device_path:
     Returns:
         KeysManager | None
     """
-    # Handle pre-existing key
     if key:
-        k_split = key.split(":")
-        if len(k_split) == 2:
-            return KeysManager([f"{k_split[0].replace('-', '').strip()}:{k_split[1].replace('-', '').strip()}"])
-        return None
+        manual = KeysManager(key)
+        return manual if manual else None
 
     # Check if we have either local or remote CDM
     cdm_remote_api = cdm_remote_api if cdm_remote_api else None

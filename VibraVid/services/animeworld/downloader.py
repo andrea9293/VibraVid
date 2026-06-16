@@ -66,7 +66,7 @@ def download_episode(episode_data, index_select, scrape_serie):
     series_name = scrape_serie.get_name()
     console.print(f"\n[yellow]Download: [red]{site_constants.SITE_NAME} → [cyan]{series_name} ([cyan]E{episode_number}) \n")
 
-    path_components, filename = map_episode_path(series_name=series_name, series_year=None, season_number=1, episode_number=episode_number, episode_name=episode_name)
+    path_components, filename = map_episode_path(series_name=series_name, series_year=None, season_number=1, episode_number=episode_number, episode_name=episode_name, absolute_number=episode_number)
     episode_path = anime_folder(*path_components)
     episode_filename = f"{filename}.mp4"
 

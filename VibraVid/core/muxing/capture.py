@@ -9,6 +9,7 @@ from typing import Optional
 from VibraVid.utils.os import internet_manager
 from VibraVid.core.ui.tracker import context_tracker, download_tracker
 from VibraVid.core.ui.bar_manager import console
+from VibraVid.core.velora.download_utils import parse_max_time
 
 
 logger = logging.getLogger(__name__)
@@ -28,18 +29,6 @@ class ProgressData:
     def get(self):
         with self.lock:
             return self.last_data
-
-
-def _parse_time_to_seconds(time_str: str) -> Optional[float]:
-    """Convert HH:MM:SS time string to seconds."""
-    try:
-        parts = time_str.strip().split(':')
-        if len(parts) == 3:
-            h, m, s = parts
-            return int(h) * 3600 + int(m) * 60 + int(s)
-    except Exception:
-        pass
-    return None
 
 
 def _format_eta(eta_seconds: float) -> str:
@@ -106,7 +95,7 @@ def capture_output(process: subprocess.Popen, description: str, progress_data: P
                         # Compute ETA from total_duration and time already processed
                         eta_str = 'N/A'
                         if total_duration and total_duration > 0:
-                            processed_sec = _parse_time_to_seconds(time_processed)
+                            processed_sec = parse_max_time(time_processed)
                             if processed_sec is not None and processed_sec > 0:
                                 remaining_sec = total_duration - processed_sec
                                 eta_str = _format_eta(remaining_sec)

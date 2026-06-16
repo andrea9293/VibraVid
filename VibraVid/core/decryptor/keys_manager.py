@@ -1,5 +1,6 @@
 # 01.04.26
 
+import re
 import logging
 from typing import Optional
 
@@ -9,100 +10,120 @@ logger = logging.getLogger(__name__)
 
 
 class KeysManager:
+    _HEX_PAIR_RE = re.compile(r"([0-9a-fA-F]{32})\s*:\s*([0-9a-fA-F]{32})")
+    _SPLIT_RE = re.compile(r"[|,\s]+")
+
     def __init__(self, keys=None) -> None:
         self._keys: list[tuple[str, str]] = []
         if keys:
             self.add_keys(keys)
 
     def add_keys(self, keys) -> None:
-        if isinstance(keys, str):
-            for k in keys.split("|"):
-                pair = k.strip()
-                if ":" in pair:
-                    kid, key = pair.split(":", 1)
-                    self._keys.append((kid.strip(), key.strip()))
-        elif isinstance(keys, list):
-            for k in keys:
-                if isinstance(k, str):
-                    pair = k.strip()
-                    if ":" in pair:
-                        kid, key = pair.split(":", 1)
-                        self._keys.append((kid.strip(), key.strip()))
-                elif isinstance(k, dict):
-                    kid = k.get("kid", "")
-                    key = k.get("key", "")
-                    if kid and key:
-                        self._keys.append((kid.strip(), key.strip()))
+        """Parse *keys* (any supported form), normalise and append, skipping duplicates."""
+        for kid, key in self._iter_pairs(keys):
+            pair = (self._clean(kid), self._clean(key))
+            if pair[1] and pair not in self._keys:
+                self._keys.append(pair)
 
     def get_keys_list(self) -> list[str]:
+        """Return keys as a list of clean ``"kid:key"`` strings."""
         return [f"{kid}:{key}" for kid, key in self._keys]
 
-    def __len__(self) -> int:               
-        return len(self._keys)
-    def __iter__(self):                           
-        return iter(self._keys)
-    def __getitem__(self, index):                 
-        return self._keys[index]
-    def __bool__(self)      -> bool:              
-        return len(self._keys) > 0
+    @staticmethod
+    def _clean(value: str) -> str:
+        """Canonical form for a KID or KEY: dash-stripped, trimmed, lowercase hex."""
+        return str(value).replace("-", "").strip().lower()
 
-def normalize_keys(keys) -> list[tuple[str, str]]:
-    """
-    Coerce any supported key representation into a list of ``(kid, key)`` lowercase hex string tuples.
-    """
-    if isinstance(keys, KeysManager):
-        raw = keys.get_keys_list()
-    elif isinstance(keys, str):
-        raw = [k.strip() for k in keys.split("|") if k.strip()]
-    elif isinstance(keys, list):
-        raw = keys
-    else:
-        raw = []
+    @classmethod
+    def _iter_pairs(cls, keys):
+        """Yield raw (uncleaned) ``(kid, key)`` pairs from any supported representation."""
+        if not keys:
+            return
 
-    normalized: list[tuple[str, str]] = []
-    for item in raw:
-        if isinstance(item, (tuple, list)) and len(item) == 2:
-            normalized.append((str(item[0]).lower(), str(item[1]).lower()))
-        
-        elif isinstance(item, str):
-            for pair in item.split("|"):
-                p = pair.strip()
-                if not p:
+        if isinstance(keys, KeysManager):
+            yield from keys._keys
+            return
+
+        if isinstance(keys, dict):
+            kid, key = keys.get("kid", ""), keys.get("key", "")
+            if kid and key:
+                yield (kid, key)
+            return
+
+        if isinstance(keys, (list, tuple)):
+            # A bare 2-element pair of plain values (no ':' in the first) is one (kid, key).
+            if (len(keys) == 2 and all(isinstance(v, str) for v in keys) and ":" not in keys[0]):
+                yield (keys[0], keys[1])
+            else:
+                for item in keys:
+                    yield from cls._iter_pairs(item)
+            return
+
+        if isinstance(keys, str):
+            s = keys.strip()
+            if not s:
+                return
+            
+            # Fast, robust path for standard 32-hex pairs: tolerant of any/no separator.
+            hex_pairs = cls._HEX_PAIR_RE.findall(s)
+            if hex_pairs:
+                yield from hex_pairs
+                return
+            
+            # Generic path: split on separators, then on the first ':' of each token.
+            for token in cls._SPLIT_RE.split(s):
+                if not token:
                     continue
-
-                if ":" in p:
-                    kid, key = p.split(":", 1)
-                    normalized.append((kid.strip().lower(), key.strip().lower()))
+                if ":" in token:
+                    kid, key = token.split(":", 1)
+                    yield (kid, key)
                 else:
-                    normalized.append(("1", p.lower()))
-    
-    return normalized
+                    # Bare key with no KID (e.g. raw ClearKey) — pair with placeholder.
+                    yield ("1", token)
+            return
 
+    @classmethod
+    def normalize(cls, keys) -> list[tuple[str, str]]:
+        """Coerce any supported key representation into a list of ``(kid, key)`` lowercase hex string tuples."""
+        return list(cls(keys))
 
-def is_zero_kid(kid: Optional[str]) -> bool:
-    """Return True when *kid* is all-zero hex (fixed-key stream)."""
-    return bool(kid and kid.lower() == "0" * len(kid))
+    @staticmethod
+    def is_zero_kid(kid: Optional[str]) -> bool:
+        """Return True when *kid* is all-zero hex (fixed-key stream)."""
+        return bool(kid and kid.lower() == "0" * len(kid))
 
+    @classmethod
+    def resolve_fixed_key(cls, encrypted_path: str, detected_kid: Optional[str], normalized_keys: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        """
+        For fixed-key streams (all-zero KID) with multiple candidates, attempt to
+        narrow to the correct key by extracting the real KID from the Widevine PSSH.
 
-def resolve_fixed_key_if_needed(encrypted_path: str, detected_kid: Optional[str], normalized_keys: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """
-    For fixed-key streams (all-zero KID) with multiple candidates, attempt to
-    narrow to the correct key by extracting the real KID from the Widevine PSSH.
+        Falls back to the first key if PSSH extraction fails or yields no match.
+        """
+        if not cls.is_zero_kid(detected_kid) or len(normalized_keys) <= 1:
+            return normalized_keys
 
-    Falls back to the first key if PSSH extraction fails or yields no match.
-    """
-    if not is_zero_kid(detected_kid) or len(normalized_keys) <= 1:
-        return normalized_keys
+        pssh_kid = extract_widevine_kid(encrypted_path)
+        if not pssh_kid:
+            logger.warning("Fixed-key stream with multiple keys but no PSSH KID extracted; using first key")
+            return [normalized_keys[0]]
 
-    pssh_kid = extract_widevine_kid(encrypted_path)
-    if not pssh_kid:
-        logger.warning("Fixed-key stream with multiple keys but no PSSH KID extracted; using first key")
+        for pair in normalized_keys:
+            if pair[0].lower() == pssh_kid:
+                logger.info(f"Fixed-key stream: selected key by PSSH KID match ({pssh_kid})")
+                return [pair]
+
+        logger.warning(f"No key matched PSSH KID {pssh_kid}; using first key")
         return [normalized_keys[0]]
 
-    for pair in normalized_keys:
-        if pair[0].lower() == pssh_kid:
-            logger.info(f"Fixed-key stream: selected key by PSSH KID match ({pssh_kid})")
-            return [pair]
-
-    logger.warning(f"No key matched PSSH KID {pssh_kid}; using first key")
-    return [normalized_keys[0]]
+    def __len__(self) -> int:
+        return len(self._keys)
+    
+    def __iter__(self):
+        return iter(self._keys)
+    
+    def __getitem__(self, index):
+        return self._keys[index]
+    
+    def __bool__(self) -> bool:
+        return len(self._keys) > 0

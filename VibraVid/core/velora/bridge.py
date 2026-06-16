@@ -335,7 +335,7 @@ def run_download_plan(plan: Dict[str, Any], progress_cb: Optional[Callable[[int,
             event_name = (event.get("event") or "").lower()
 
             if event_name in {"start", "summary"}:
-                logger.info(_format_bridge_event(event))
+                logger.debug(_format_bridge_event(event))
                 continue
 
             if event_name == "retry":
