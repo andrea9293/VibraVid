@@ -90,6 +90,7 @@ class Generic_Downloader(BaseDownloader):
         self.custom_filters = custom_filters or {}
         self._active: List[Tuple[MediaDownloader, Dict[str, Any]]] = []
         self._dv_stream = None
+        self._dv_isolated = False
         self.other_tracks: list = []
         logger.info(f"Initialized GENERIC_Downloader with {len(self.sources)} source(s), max_segments={self.max_segments}")
         super().__init__(output_path, "_generic_temp")
@@ -143,7 +144,80 @@ class Generic_Downloader(BaseDownloader):
             parsed.append((md, source))
         return parsed
 
+    def _apply_explicit_roles(self, parsed: List[Tuple[MediaDownloader, Dict[str, Any]]]) -> Tuple[List, List[Tuple[MediaDownloader, Dict[str, Any]]]]:
+        """Apply per-source explicit ``role`` tags and split them off from auto-selection.
+
+            {"url": ..., "key": ..., "role": "video:dv"}   # Dolby Vision video
+            {"url": ..., "key": ..., "role": "video:hdr10"}
+            {"url": ..., "key": ..., "role": "audio", "language": "en"}
+            {"url": ..., "key": ..., "role": "subtitle", "language": "en"}
+
+        Returns ``(role_streams, auto_parsed)`` where ``auto_parsed`` are the sources left to the normal pool/dedup/StreamSelector path.
+        """
+        role_streams: List = []
+        auto_parsed: List[Tuple[MediaDownloader, Dict[str, Any]]] = []
+
+        for md, src in parsed:
+            role = str(src.get("role") or src.get("type") or "").strip().lower()
+            if not role:
+                auto_parsed.append((md, src))
+                continue
+
+            kind, _, tag = role.partition(":")
+            kind, tag = kind.strip(), tag.strip()
+
+            cands = [s for s in md.streams if not getattr(s, "is_external", False)]
+            if not cands:
+                logger.warning(f"Source role '{role}' has no parsable stream — skipping")
+                continue
+
+            # Rendition manifests expose a single stream (parsed as video); if
+            # several are present keep the highest-bitrate one.
+            stream = max(cands, key=lambda s: getattr(s, "bitrate", 0) or 0)
+            for s in md.streams:
+                s.selected = (s is stream)
+
+            lang = src.get("language") or src.get("lang")
+            name = src.get("name")
+
+            if kind in ("video", "vid"):
+                stream.type = "video"
+                if tag == "dv":
+                    stream.video_range = "DV"
+                    stream.resolution = stream.resolution or "DV"
+                    self._dv_stream = stream
+                    self._dv_isolated = True
+                elif tag:
+                    stream.video_range = tag.upper()  # HDR10, HDR10PLUS, SDR, ...
+            
+            elif kind in ("audio", "aud"):
+                stream.type = "audio"
+                if lang:
+                    stream.language = lang
+            
+            elif kind in ("subtitle", "sub"):
+                stream.type = "subtitle"
+                if lang:
+                    stream.language = lang
+            
+            else:
+                logger.warning(f"Unknown source role '{role}' — treating as video")
+                stream.type = "video"
+
+            if name:
+                stream.name = name
+            setattr(stream, "_src_label", src.get("label") or kind)
+            _normalize_lang(stream)
+
+            role_streams.append(stream)
+            logger.info(f"Explicit role '{role}' -> {stream.type} (range={getattr(stream, 'video_range', '')!r}, lang={getattr(stream, 'language', '')!r})")
+
+        return role_streams, auto_parsed
+
     def _select(self, parsed: List[Tuple[MediaDownloader, Dict[str, Any]]]) -> List:
+        # Sources with an explicit role bypass attribute-based dedup/selection.
+        role_streams, parsed = self._apply_explicit_roles(parsed)
+
         # Merge + dedup (keep first occurrence in source order).
         pool: list = []
         seen: set = set()
@@ -182,16 +256,24 @@ class Generic_Downloader(BaseDownloader):
             StreamSelector(v, a, sub, formatter=StreamSelectorFormatter()).apply(pool)
 
         # If a DV companion was selected, keep a reference to it for special handling in the download and muxing phases.
-        self._dv_stream = next((s for s in pool if getattr(s, "dv_companion", False)), None)
-        if self._dv_stream is not None:
-            self._dv_stream.selected = True
-            logger.info(f"&dv: companion selected -> {self._dv_stream}")
+        # An explicit-role DV (self._dv_stream already set) takes precedence over &dv auto-detection.
+        if self._dv_stream is None:
+            self._dv_stream = next((s for s in pool if getattr(s, "dv_companion", False)), None)
+            if self._dv_stream is not None:
+                self._dv_stream.selected = True
+                logger.info(f"&dv: companion selected -> {self._dv_stream}")
 
-        return [s for s in pool if s.selected]
+        return role_streams + [s for s in pool if s.selected]
 
     def _setup_dv_companion(self) -> None:
         """Re download the manifest of the DV companion in a dedicated MediaDownloader, to isolate it from the main video stream and avoid filename collisions on disk (both have the same "{filename}.{ext}")."""
         if self._dv_stream is None:
+            return
+
+        # An explicit-role DV source already lives in its own MediaDownloader
+        # (own out_dir), so there is no filename collision and no re-parse needed.
+        if self._dv_isolated:
+            logger.info("&dv: DV companion came from an explicit role source — already isolated")
             return
 
         owner = next(((md, src) for md, src in self._active if self._dv_stream in md.streams), None)

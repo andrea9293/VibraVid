@@ -80,6 +80,12 @@ class SonarrClient:
         except Exception:
             return False
 
+    # ── config ───────────────────────────────────────────
+
+    def get_naming_config(self) -> Dict[str, Any]:
+        """Get Sonarr's naming/folder-format configuration (includes seasonFolderFormat)."""
+        return self._get("/config/naming").json()
+
     # ── wanted / missing ─────────────────────────────────
 
     def wanted_missing(self, page: int = 1, page_size: int = 20) -> Dict[str, Any]:

@@ -1,8 +1,12 @@
 # 10.04.26
 
+import logging
 import re
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
+
+
+logger = logging.getLogger(__name__)
 
 
 def hls_base_url(playlist_url: str) -> str:
@@ -20,11 +24,15 @@ def parse_hls_variant_playlist(content: str, base_url: str) -> Tuple[List[Dict],
         - List of segment dicts: {"url", "number", "enc"}
         - Optional init segment URL (from EXT-X-MAP)
     """
-    segments: List[Dict] = []
+    # Each block: {"init": Optional[str], "segments": List[Dict]}
+    blocks: List[Dict] = []
+    current_block: Optional[Dict] = None
     current_enc: Dict = {"method": "NONE", "key_url": None, "iv": None}
-    init_url: Optional[str] = None
-    seg_num = 0
-    map_count = 0
+
+    def _ensure_block(init: Optional[str]) -> Dict:
+        block = {"init": init, "segments": []}
+        blocks.append(block)
+        return block
 
     lines = content.splitlines()
     i = 0
@@ -42,16 +50,9 @@ def parse_hls_variant_playlist(content: str, base_url: str) -> Tuple[List[Dict],
             }
 
         elif line.startswith("#EXT-X-MAP:"):
-            map_count += 1
-
-            # Legacy HLS: stop when a second MAP appears to avoid mixing
-            # init/segments from different timeline blocks.
-            if map_count > 1:
-                break
-
             uri_m = re.search(r'URI="([^"]+)"', line)
-            if uri_m:
-                init_url = urljoin(base_url, uri_m.group(1))
+            init_url = urljoin(base_url, uri_m.group(1)) if uri_m else None
+            current_block = _ensure_block(init_url)
 
         elif line.startswith("#EXTINF:"):
             dur_m = re.match(r"#EXTINF:([\d.]+)", line)
@@ -59,25 +60,38 @@ def parse_hls_variant_playlist(content: str, base_url: str) -> Tuple[List[Dict],
             i += 1
             while i < len(lines) and (not lines[i].strip() or lines[i].strip().startswith("#")):
                 i += 1
-            
+
             if i < len(lines):
                 seg_url = lines[i].strip()
                 if seg_url and not seg_url.startswith("#"):
-                    segments.append(
+                    if current_block is None:
+                        current_block = _ensure_block(None)
+                    
+                    current_block["segments"].append(
                         {
                             "url":      urljoin(base_url, seg_url),
-                            "number":   seg_num,
                             "enc":      dict(current_enc),
                             "duration": seg_duration,
                         }
                     )
-                    seg_num += 1
             i += 1
             continue
 
         i += 1
 
-    return segments, init_url
+    if not blocks:
+        return [], None
+
+    # Pick the dominant block (the feature), tie-broken by total duration.
+    best = max(blocks, key=lambda b: (len(b["segments"]), sum(s["duration"] for s in b["segments"])))
+    if len(blocks) > 1:
+        logger.info(f"HLS playlist has {len(blocks)} init blocks (sizes: {[len(b['segments']) for b in blocks]}); keeping the dominant block with {len(best['segments'])} segments")
+
+    segments = best["segments"]
+    for seg_num, seg in enumerate(segments):
+        seg["number"] = seg_num
+
+    return segments, best["init"]
 
 def parse_hls_live_playlist(content: str, base_url: str) -> Tuple[List[Dict], Optional[str], int, int, bool]:
     """Parse a live HLS playlist and return all relevant scheduling metadata."""

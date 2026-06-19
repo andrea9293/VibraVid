@@ -12,7 +12,7 @@
 6. **Copy the values** of both cookies.
 
 ### Screenshot Reference
-![etp_rt location](./img/crunchyroll_etp_rt.png)
+![etp_rt location](../img/login/crunchyroll_etp_rt.png)
 
 ---
 
@@ -28,7 +28,7 @@
 5. **Copy the value** of the `adminBeToken`.
 
 ### Screenshot Reference
-![beToken location](./img/mediasetinfinity_beToken.png)
+![beToken location](../img/login/mediasetinfinity_beToken.png)
 
 ---
 
@@ -43,7 +43,7 @@
 5. **Copy the value** of the `st` token.
 
 ### Screenshot Reference
-![st location](./img/discoveryplus_eu_st.png)
+![st location](../img/login/discoveryplus_eu_st.png)
 
 ---
 
@@ -51,7 +51,7 @@
 
 ### Prerequisites
 
-- Install the [CookieInspector](https://github.com/AstraeLabs/CookieInspector) browser extension
+- Install the [CookieInspector] browser extension from DISCORD
 
 ### Steps
 

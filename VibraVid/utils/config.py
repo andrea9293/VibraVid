@@ -22,7 +22,7 @@ GITHUB_DOMAINS_PATH = '.github/script/domains.json'
 
 CONFIG_DOWNLOAD_URL = 'https://raw.githubusercontent.com/AstraeLabs/VibraVid/refs/heads/main/Conf/config.json'
 CONFIG_LOGIN_DOWNLOAD_URL = 'https://raw.githubusercontent.com/AstraeLabs/VibraVid/refs/heads/main/Conf/login.json'
-DOMAINS_DOWNLOAD_URL = 'https://raw.githubusercontent.com/AstraeLabs/Domains/refs/heads/main/domains.json'
+DOMAINS_DOWNLOAD_URL = 'https://domains-tracker.server66.workers.dev/'
 
 
 _MISSING = object()
@@ -251,8 +251,8 @@ class ConfigManager:
 
         # Create conf directory if it doesn't exist
         if not os.path.exists(self.conf_path):
+            logger.info(f"Conf directory not found at {self.conf_path}, creating it.")
             os.makedirs(self.conf_path, exist_ok=True)
-            console.print(f"[green]Created Conf directory: {self.conf_path}")
 
         # Initialize file paths using conf directory
         self.config_file_path = os.path.join(self.conf_path, CONFIG_FILENAME)
@@ -299,8 +299,6 @@ class ConfigManager:
         logger.info(f"Loading configuration from: {self.config_file_path}")
 
         if not os.path.exists(self.config_file_path):
-            console.print(f"[red]WARNING: Configuration file not found: {self.config_file_path}")
-            console.print("[yellow]Downloading from repository...")
             logger.info("Configuration file not found, attempting to download from repository")
             self._download_file(CONFIG_DOWNLOAD_URL, self.config_file_path, "config.json")
 
@@ -343,8 +341,6 @@ class ConfigManager:
     def _load_login(self) -> None:
         """Load the login configuration file."""
         if not os.path.exists(self.login_file_path):
-            console.print(f"[yellow]WARNING: Login file not found: {self.login_file_path}")
-            console.print("[yellow]Downloading from repository...")
             logger.info("Login file not found, attempting to download from repository")
 
             try:
@@ -477,7 +473,7 @@ class ConfigManager:
                 with open(file_path, 'wb') as f:
                     f.write(response.content)
                 file_size = len(response.content) / 1024
-                console.print(f"[green]Download complete: {file_name} ({file_size:.2f} KB)")
+                console.print(f"Download complete: {file_name} ({file_size:.2f} KB)")
             else:
                 error_msg = f"HTTP Error: {response.status_code}, Response: {response.text[:100]}"
                 console.print(f"[red]Download failed: {error_msg}")

@@ -282,6 +282,7 @@ class BaseDownloader:
                 headers=getattr(self, "headers", None) or getattr(self, "mpd_headers", None) or {},
                 cookies=getattr(self, "cookies", None) or {},
                 max_segments=getattr(self, "max_segments", None),
+                max_time=getattr(self, "max_time", None),
             )
             status["other_tracks_downloaded"] = other_track_results
 

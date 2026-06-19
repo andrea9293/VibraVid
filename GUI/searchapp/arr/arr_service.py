@@ -44,6 +44,7 @@ def _load_arr_config() -> dict:
         "polling_interval": 300,
         "full_resync_interval": 21600,
         "max_concurrent_downloads": 1,
+        "download_timeout": 7200,
         "webhook_priority_enabled": True,
         "native_webhook_priority_window_seconds": 120,
         "seerr_fallback_delay_seconds": 20,
@@ -515,7 +516,7 @@ def trigger_polling_sync(full_resync: bool = False) -> int:
 
     from .processor_service import ArrProcessorService
     from .downloader_service import ArrDownloaderService
-    _reconcile_recent_import_failures()
+    _reconcile_orphaned_downloads(older_than_seconds=cfg.get("download_timeout", 7200))
     _reconcile_unmonitored_pending(sonarr=sonarr, radarr=radarr)
 
     processor = ArrProcessorService(
@@ -584,36 +585,40 @@ def trigger_polling_sync(full_resync: bool = False) -> int:
     return enqueued
 
 
-def _reconcile_recent_import_failures(window_minutes: int = 30) -> int:
+def _reconcile_orphaned_downloads(older_than_seconds: Optional[int] = None) -> int:
     """
-    Re-open recent failed/pending-import queue entries so polling can retry them.
-    Returns count of queue rows re-opened.
+    Recover queue rows stuck in 'Downloading' (started but never completed).
+
+    When a download crashes, hangs, or the server is restarted mid-download, the
+    queue row keeps ``started_at`` set with ``completed_at`` NULL. The dedup check in
+    ``_enqueue_if_new`` then treats it as an active entry forever, so the item is
+    never retried and stays visible as 'Downloading' in the UI. Mark such rows as
+    FAILED (``completed_at`` set, ``success=False``) so the reusable-retry branch of
+    ``_enqueue_if_new`` re-attempts them on the next polling cycle.
+
+    Returns the count of queue rows recovered.
     """
     from searchapp.models import ArrMediaRequest, ArrProcessingQueue
 
-    cutoff = timezone.now() - timedelta(minutes=window_minutes)
     candidates = ArrProcessingQueue.objects.filter(
-        completed_at__gte=cutoff,
-        success=False,
-        media_request__status__in=[
-            ArrMediaRequest.Status.FAILED,
-            getattr(ArrMediaRequest.Status, "IMPORT_PENDING", ArrMediaRequest.Status.FAILED),
-        ],
+        started_at__isnull=False,
+        completed_at__isnull=True,
     ).select_related("media_request")
+    if older_than_seconds is not None:
+        candidates = candidates.filter(started_at__lte=timezone.now() - timedelta(seconds=older_than_seconds))
 
-    reopened = 0
+    recovered = 0
     for queue_entry in candidates:
-        queue_entry.completed_at = None
-        queue_entry.started_at = None
-        queue_entry.success = None
-        queue_entry.save(update_fields=["completed_at", "started_at", "success"])
-        queue_entry.media_request.status = ArrMediaRequest.Status.PENDING
+        queue_entry.completed_at = timezone.now()
+        queue_entry.success = False
+        queue_entry.save(update_fields=["completed_at", "success"])
+        queue_entry.media_request.status = ArrMediaRequest.Status.FAILED
         queue_entry.media_request.save(update_fields=["status"])
-        reopened += 1
+        recovered += 1
 
-    if reopened:
-        logger.info(f"Re-opened {reopened} recent failed/import_pending entries for polling retry")
-    return reopened
+    if recovered:
+        logger.warning(f"Recovered {recovered} orphaned 'Downloading' queue entr{'y' if recovered == 1 else 'ies'} (stuck mid-download); will retry on next poll")
+    return recovered
 
 
 def trigger_webhook_sync(event_data: dict) -> int:

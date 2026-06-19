@@ -26,7 +26,16 @@ def _should_start_loop() -> bool:
 
 def _arr_loop() -> None:
     """Main background loop for ARR polling."""
-    from .arr.arr_service import _load_arr_config, trigger_polling_sync
+    from .arr.arr_service import _load_arr_config, trigger_polling_sync, _reconcile_orphaned_downloads
+
+    # Any queue row left in 'Downloading' at startup is orphaned by a previous
+    # crash/restart (nothing is running yet), so recover them unconditionally.
+    try:
+        from django.db import close_old_connections
+        close_old_connections()
+        _reconcile_orphaned_downloads()
+    except Exception as exc:
+        logger.error(f"Startup orphaned-download reconcile failed: {exc}")
 
     last_poll = 0.0
     last_resync = 0.0

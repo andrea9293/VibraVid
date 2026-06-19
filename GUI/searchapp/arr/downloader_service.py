@@ -8,10 +8,12 @@ directly calls the VibraVid internal streaming API (`get_api(site).search()` /
 `start_download()`) using the same pipeline that the GUI uses.
 """
 
+import concurrent.futures
 import datetime
 import json
 import logging
 import pathlib
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +21,7 @@ from .clients.sonarr_client import SonarrClient
 from .clients.radarr_client import RadarrClient
 
 logger = logging.getLogger("ARR")
+_ARR_SEARCH_TIMEOUT = 45
 
 
 class ArrDownloaderService:
@@ -28,6 +31,21 @@ class ArrDownloaderService:
         self.sonarr = sonarr
         self.radarr = radarr
         self.last_error: Optional[str] = None
+        self.download_timeout = self._load_download_timeout()
+        self._sonarr_season_format: Optional[str] = None
+
+    @staticmethod
+    def _load_download_timeout() -> int:
+        """Max seconds to block on a single download before giving up (configurable).
+
+        Bounds how long one slow/hung download can stall the single-threaded ARR
+        polling loop; on timeout the item is marked failed and the loop moves on.
+        """
+        try:
+            from .arr_service import _load_arr_config
+            return int(_load_arr_config().get("download_timeout", 7200))
+        except Exception:
+            return 7200
 
     # ── public ───────────────────────────────────────────
 
@@ -102,8 +120,14 @@ class ArrDownloaderService:
                 if not series_root:
                     series_root = self._fallback_series_root(title)
 
-                # Target folder: series root + season subfolder
-                target_folder = str(pathlib.Path(series_root).joinpath(f"S{season_num:02d}"))
+                # Target folder: series root + season subfolder, named exactly as Sonarr
+                # expects it (e.g. "Season 1"). A hardcoded "S01" did not match Sonarr's
+                # seasonFolderFormat, so it left episodes in that folder instead of its own.
+                season_folder = self._sonarr_season_folder(serie, season_num)
+                if season_folder:
+                    target_folder = str(pathlib.Path(series_root).joinpath(season_folder))
+                else:
+                    target_folder = str(series_root)
                 logger.info(f"[S{season_num}E{ep_num}] Target folder (Sonarr's path): '{target_folder}'")
 
                 download_folder = self._translate_path(target_folder, reverse=True)
@@ -122,7 +146,7 @@ class ArrDownloaderService:
                 any_success = True
 
                 try:
-                    future.result(timeout=7200)  # wait for download to actually finish
+                    future.result(timeout=self.download_timeout)  # wait for download to actually finish
                     time.sleep(2)
 
                     # Get series root path for rescan
@@ -251,7 +275,7 @@ class ArrDownloaderService:
         )
 
         try:
-            future.result(timeout=7200)  # wait for download to actually finish
+            future.result(timeout=self.download_timeout)  # wait for download to actually finish
             time.sleep(2)
 
             result_name = item_payload.get("name", matched_title)
@@ -562,8 +586,18 @@ class ArrDownloaderService:
                 f"expected_tmdb={tmdb_id} year_range={year_range}"
             )
 
-            # Search using the normalized title
-            results = api.search(search_query)
+            # Search using the normalized title, bounded by a global timeout so a
+            # hung/slow provider cannot stall the single-threaded polling loop.
+            # shutdown(wait=False) is essential: the context-manager form would block
+            # on a hung search at exit, defeating the timeout.
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                results = ex.submit(api.search, search_query).result(timeout=_ARR_SEARCH_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"[search] '{provider}' timed out after {_ARR_SEARCH_TIMEOUT}s for '{search_query}', moving on")
+                return None
+            finally:
+                ex.shutdown(wait=False, cancel_futures=True)
 
             if not results:
                 logger.warning(f"[search] No results for '{search_query}' on '{provider}'")
@@ -900,6 +934,47 @@ class ArrDownloaderService:
         base = config_manager.config.get("OUTPUT", "root_path")
         folder = config_manager.config.get("OUTPUT", "movie_folder_name")
         return str(pathlib.Path(base).joinpath(folder, title))
+
+    def _sonarr_season_folder(self, serie: dict, season_num: int) -> str:
+        """Return the season subfolder name exactly as Sonarr lays it out on disk.
+
+        Sonarr puts episodes in a per-season subfolder whose name comes from the
+        instance-wide ``seasonFolderFormat`` (e.g. ``Season {season:00}`` -> "Season 01",
+        ``Season {season}`` -> "Season 1"). When a series has season folders disabled,
+        episodes live directly in the series root and this returns "".
+
+        Downloading into a hardcoded "S01" produced a folder Sonarr didn't recognise, so
+        it imported the files in place there instead of its own "Season N" folder.
+        """
+        # Per-series toggle: when off there is no season subfolder at all.
+        if serie.get("seasonFolder") is False:
+            return ""
+
+        return self._render_season_format(self._get_sonarr_season_format(), season_num)
+
+    def _get_sonarr_season_format(self) -> str:
+        """Fetch and cache Sonarr's seasonFolderFormat, defaulting to Sonarr's own default."""
+        if self._sonarr_season_format is None:
+            fmt = "Season {season:00}"
+            try:
+                fmt = self.sonarr.get_naming_config().get("seasonFolderFormat") or fmt
+            except Exception as exc:
+                logger.warning(f"Could not fetch Sonarr naming config, using default season folder format: {exc}")
+            self._sonarr_season_format = fmt
+        return self._sonarr_season_format or "Season {season:00}"
+
+    @staticmethod
+    def _render_season_format(fmt: str, season_num: int) -> str:
+        """Render a Sonarr ``seasonFolderFormat`` token into a concrete folder name.
+
+        Handles ``{season}`` and zero-padded ``{season:00}`` style tokens.
+        """
+        def _sub(match) -> str:
+            pad = match.group(1)
+            return str(season_num).zfill(len(pad)) if pad else str(season_num)
+
+        rendered = re.sub(r"\{season(?::(0+))?\}", _sub, fmt).strip()
+        return rendered or f"Season {season_num:02d}"
 
     def _get_vibrativo_serie_output(self, arr_series_path: str, title: str, season_num: int, year: Optional[int] = None) -> str:
         """Compute the VibraVid output path relative to Sonarr's root folder."""

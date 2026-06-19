@@ -362,6 +362,7 @@ class HLSParser:
         s.drm = drm
         s.playlist_url = self.m3u8_url
         s.id = _make_video_id(s)
+        s.is_live = (total_dur > 0) and ("#EXT-X-ENDLIST" not in (self.raw_content or ""))
         logger.info(f"HLS add | {s}")
         return [s] + existing
 

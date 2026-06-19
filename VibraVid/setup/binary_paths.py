@@ -101,6 +101,11 @@ class BinaryPaths:
 
         return None
 
+    def invalidate_binary(self, binary_name: str) -> None:
+        """Drop the cached resolution for *binary_name* so the next lookup re-resolves it."""
+        with self._download_lock:
+            self._resolved.pop(binary_name, None)
+
     def download_binary(self, tool: str, binary_name: str) -> Optional[str]:
         """
         Download *binary_name* from GitHub and store it in the binary

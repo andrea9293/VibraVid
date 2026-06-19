@@ -351,7 +351,11 @@ def run_download_plan(plan: Dict[str, Any], progress_cb: Optional[Callable[[int,
                 continue
 
             if event_name in {"error", "cancelled"}:
-                logger.info(_format_bridge_event(event))
+                if event_name == "error":
+                    logger.warning(_format_bridge_event(event))
+                else:
+                    logger.info(_format_bridge_event(event))
+                
                 if event_cb:
                     normalized_event = dict(event)
                     normalized_event.setdefault("task_key", plan.get("task_key", "download"))

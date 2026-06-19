@@ -1,5 +1,11 @@
 <div align="center">
 
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)
+![Release](https://img.shields.io/github/v/release/AstraeLabs/VibraVid?style=flat-square&color=success)
+![License](https://img.shields.io/github/license/AstraeLabs/VibraVid?style=flat-square)
+![ARR](https://img.shields.io/badge/ARR-Sonarr%20%7C%20Radarr-orange?style=flat-square)
+![GUI](https://img.shields.io/badge/GUI-Web%20UI-blueviolet?style=flat-square)
+
 [![Sponsor](https://img.shields.io/badge/💖_Sponsor-ea4aaa?style=for-the-badge&logo=github-sponsors&logoColor=white&labelColor=2d3748)](https://ko-fi.com/arrowar)
 
 [![Windows](https://img.shields.io/badge/🪟_Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_win_2025_x64.exe)
@@ -143,8 +149,38 @@ uv sync --upgrade
 | **MP4**  | Download diretto MP4               | [Vedi esempio](../../Test/Downloads/MP4.py)  |
 | **DASH** | MPEG-DASH con bypass DRM\*         | [Vedi esempio](../../Test/Downloads/DASH.py) |
 | **ISM** | Smooth Streaming con bypass DRM\*  | [Vedi esempio](../../Test/Downloads/ISM.py) |
+| **Custom** | Ibrido multi-sorgente | [Vedi esempio](../../Test/Downloads/CUSTOM.py) |
 
 > **\*DASH con bypass DRM:** Richiede un CDM (Content Decryption Module) valido L3\L2\L1\SL3000\SL2000. Questo progetto non fornisce né facilita l'ottenimento di CDM. Gli utenti devono assicurarsi di rispettare le leggi vigenti.
+
+### Download personalizzati multi-sorgente
+
+`Generic_Downloader` accetta una lista di `sources`, scarica ogni traccia selezionata di
+ogni sorgente **in parallelo** su un'unica barra di avanzamento condivisa, poi le unisce in
+un singolo file — incluso l'output ibrido **Dolby Vision + HDR10** (l'RPU del DV viene
+iniettato nella base HDR10 tramite `mkvmerge`/`dovi_tool`).
+
+Quando le sorgenti sono manifest completi (MPD DASH, master HLS) le tracce vengono
+auto-selezionate da codec/risoluzione/range dichiarati.
+
+```python
+from VibraVid.core.downloader import Generic_Downloader
+
+sources = [
+    {"role": "video:hdr10", "url": "<m3u8 hdr10>", "key": "<kid:key>"},
+    {"role": "video:dv",    "url": "<m3u8 dv>",    "key": "<kid:key>"},
+    {"role": "audio", "language": "en", "url": "<m3u8 audio>", "key": "<kid:key>"},
+    {"role": "subtitle", "language": "en", "url": "<url sottotitolo>"},
+]
+
+Generic_Downloader(sources=sources, output_path="./Video/out.mkv").start()
+```
+
+Valori `role` supportati: `video`, `video:dv`, `video:hdr10` (o qualsiasi tag di range),
+`audio`, `subtitle`. Una sorgente `video:dv` viene instradata automaticamente come
+companion Dolby Vision per il mux ibrido. Campi opzionali per sorgente: `language`,
+`name`, `label`, `headers`, `cookies`, `protocol`. Per limitare un test usa
+`max_segments=N` oppure `max_time="HH:MM:SS"`.
 
 ---
 

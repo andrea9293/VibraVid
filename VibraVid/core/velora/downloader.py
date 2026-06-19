@@ -1,14 +1,15 @@
 # 09.04.26
 
+import re
+import os
+import time
 import asyncio
 import logging
-import os
 import queue
-import re
 import shutil
 import struct
 import threading
-import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlsplit, urlunsplit
@@ -826,7 +827,8 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             _seg_dur_cumulative.append(_acc)
 
         decrypt_queue: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
-        decrypt_errors: List[str] = []
+        decrypt_errors: List[str] = []      # per-segment decryption error messages (diagnostics)
+        seg_errors: List[str] = []          # per-segment HTTP/transport error messages (diagnostics)
         decrypt_thread: Optional[threading.Thread] = None
         probe_lock = threading.Lock()
         probe_done = False
@@ -1003,7 +1005,12 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
 
         def _handle_download_event(event: Dict[str, Any]) -> None:
             event_name = (event.get("event") or "").lower()
-            if event_name in {"start", "summary", "retry", "error", "cancelled"}:
+            if event_name == "error":
+                msg = event.get("message") or event.get("error")
+                if msg:
+                    seg_errors.append(str(msg))
+                return
+            if event_name in {"start", "summary", "retry", "cancelled"}:
                 return
             
             path_value = event.get("path")
@@ -1068,6 +1075,15 @@ class MediaDownloader(LiveDownloadMixin, BaseMediaDownloader):
             _plain_label = re.sub(r"\[/?[^\[\]]*\]", "", _stream_label_rich).strip() or task_key
             failed = collect_failed_segments(dl_segs, paths, stream_dir, default_ext)
             if failed:
+                if seg_errors:
+                    top = "; ".join(
+                        f"{m} (x{n})"
+                        for m, n in Counter(e.strip() for e in seg_errors if e.strip()).most_common(3)
+                    )
+                    logger.warning(f"{_plain_label}: {len(failed)}/{total} segment(s) failed to download — most common error(s): {top}")
+                else:
+                    logger.warning(f"{_plain_label}: {len(failed)}/{total} segment(s) failed to download")
+                
                 with self._failed_segments_lock:
                     self._failed_segments.append((_plain_label, failed))
 

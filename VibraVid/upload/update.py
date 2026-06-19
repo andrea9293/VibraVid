@@ -1,10 +1,12 @@
 # 01.03.23
 
 import os
+import re
 import sys
 import stat
 import json
 import logging
+import subprocess
 import importlib.metadata
 
 from rich.console import Console
@@ -135,9 +137,102 @@ def auto_update():
         return False
 
 
+def _fetch_latest_velora_version():
+    """Return the latest Velora version from the Velora repo's Cargo.toml, or None."""
+    try:
+        url = f"https://raw.githubusercontent.com/{__author__}/Velora/main/Cargo.toml"
+        with create_client(headers=get_headers()) as client:
+            response = client.get(url)
+        response.raise_for_status()
+
+        # The package version is the first `version = "x.y.z"` line under [package].
+        for line in response.text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("version") and "=" in stripped:
+                return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception as e:
+        logger.debug(f"Failed to fetch latest Velora version: {e}")
+    return None
+
+
+def _get_local_velora_version(velora_path):
+    """Return the version reported by `velora --version`, or None if unavailable."""
+    try:
+        out = subprocess.run([velora_path, "--version"], capture_output=True, text=True, timeout=5)
+        raw = (out.stdout or out.stderr).strip()
+        first = raw.splitlines()[0] if raw else ""
+
+        # Velora prints a JSON line e.g. {"version": "2.0.2"}; fall back to a regex.
+        try:
+            version = str(json.loads(first).get("version", "")).strip()
+            if version:
+                return version
+        except Exception:
+            pass
+
+        m = re.search(r"v?(\d+(?:\.\d+){1,3})", raw)
+        return m.group(1) if m else None
+    except Exception as e:
+        logger.debug(f"Failed to read local Velora version: {e}")
+        return None
+
+
+def check_velora_update():
+    """Re-download the Velora binary when it is outdated.
+
+    Mirrors the project's own update check: fetch the latest Velora version, compare it
+    against `velora --version`, and if they differ (or the binary reports no version at
+    all) delete the stale binary so the setup checker fetches a fresh one.
+    """
+    latest_version = _fetch_latest_velora_version()
+    if not latest_version:
+        return
+
+    from VibraVid.setup import get_velora_path
+    from VibraVid.setup import system as setup_system
+
+    velora_path = get_velora_path()
+    if not velora_path:
+        return
+
+    # Only manage the binary we downloaded ourselves; never touch a system-PATH install.
+    managed_dir = os.path.abspath(binary_paths.get_binary_directory())
+    if os.path.dirname(os.path.abspath(velora_path)) != managed_dir:
+        logger.info("Velora resolved outside the managed binary directory; skipping auto-update")
+        return
+
+    local_version = _get_local_velora_version(velora_path)
+    if local_version == latest_version:
+        logger.debug(f"Velora is up to date ({local_version})")
+        return
+
+    console.print(f"[#FFD60A]Velora outdated (local: {local_version or 'unknown'} -> latest: {latest_version}), updating...")
+
+    try:
+        os.remove(velora_path)
+    except OSError as e:
+        logger.warning(f"Failed to remove stale Velora binary: {e}")
+        return
+
+    # Drop cached resolutions so the next lookup re-downloads the binary.
+    binary_paths.invalidate_binary(os.path.basename(velora_path))
+    setup_system.reset_velora_path()
+
+    new_path = get_velora_path()
+    if new_path:
+        console.print(f"[#06A77D]Velora updated to {_get_local_velora_version(new_path) or latest_version}")
+    else:
+        console.print("[#E63946]Velora re-download failed")
+
+
 def update():
     """Check for updates on GitHub and display relevant information."""
     if auto_update_check:
+        try:
+            check_velora_update()
+        except Exception as e:
+            logger.debug(f"Velora update check failed: {e}")
+
         try:
             response_releases = fetch_github_releases()
         except Exception as e:
@@ -178,6 +273,9 @@ def update():
 
         tag_url = last_version if last_version.startswith("v") else f"v{last_version}"
         console.print(f"\n[#E63946]New version available: [#FFD60A]{last_version} | [#FFD60A]https://github.com/AstraeLabs/VibraVid/releases/tag/{tag_url}")
-        
-        if get_execution_mode() == "installer":
+
+        mode = get_execution_mode()
+        if mode == "installer":
             console.print("[#00BCD4]Run with [#FFD60A]-UP [#00BCD4]to auto-update")
+        elif mode == "source_code":
+            console.print("[#00BCD4]Run [#FFD60A]git pull [#00BCD4]to update")

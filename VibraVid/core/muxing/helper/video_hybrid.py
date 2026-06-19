@@ -118,6 +118,7 @@ def download_other_tracks(
     headers: Optional[Dict[str, str]] = None,
     cookies: Optional[Dict[str, str]] = None,
     max_segments: Optional[int] = None,
+    max_time: Optional[float] = None,
     show_progress: bool = True,
 ) -> List[Dict[str, Any]]:
     """Download extra video/audio/subtitle tracks with the manual backend.
@@ -164,6 +165,7 @@ def download_other_tracks(
             download_id=None,
             site_name=None,
             max_segments=max_segments,
+            max_time=max_time,
         )
         quality = str(track.get("quality") or "worst").strip() or "worst"
         downloader.custom_filters = _kind_to_filters(kind, tag, quality)

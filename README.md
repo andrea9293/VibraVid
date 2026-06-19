@@ -1,5 +1,11 @@
 <div align="center">
 
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)
+![Release](https://img.shields.io/github/v/release/AstraeLabs/VibraVid?style=flat-square&color=success)
+![License](https://img.shields.io/github/license/AstraeLabs/VibraVid?style=flat-square)
+![ARR](https://img.shields.io/badge/ARR-Sonarr%20%7C%20Radarr-orange?style=flat-square)
+![GUI](https://img.shields.io/badge/GUI-Web%20UI-blueviolet?style=flat-square)
+
 [![Sponsor](https://img.shields.io/badge/💖_Sponsor-ea4aaa?style=for-the-badge&logo=github-sponsors&logoColor=white&labelColor=2d3748)](https://ko-fi.com/arrowar)
 
 [![Windows](https://img.shields.io/badge/🪟_Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white&labelColor=2d3748)](https://github.com/AstraeLabs/VibraVid/releases/latest/download/VibraVid_win_2025_x64.exe)
@@ -143,8 +149,38 @@ uv sync --upgrade
 | **MP4**  | Direct MP4 download          | [View example](./Test/Downloads/MP4.py)  |
 | **DASH** | MPEG-DASH with DRM bypass\*  | [View example](./Test/Downloads/DASH.py) |
 | **ISM** | Smooth Streaming with DRM bypass\*  | [View example](./Test/Downloads/ISM.py) |
+| **Custom** | Multi-source hybrid  | [View example](./Test/Downloads/CUSTOM.py) |
 
 > **\*DASH with DRM bypass:** Requires a valid L3\L2\L1\SL3000\SL2000 CDM (Content Decryption Module). This project does not provide or facilitate obtaining CDMs. Users must ensure compliance with applicable laws.
+
+### Custom multi-source downloads
+
+`Generic_Downloader` takes a list of `sources`, downloads every selected track from
+every source **concurrently** on one shared progress bar, then muxes them into a single
+file — including hybrid **Dolby Vision + HDR10** output (the DV RPU is injected into the
+HDR10 base via `mkvmerge`/`dovi_tool`).
+
+When sources are full manifests (DASH MPD, HLS master) the tracks are auto-selected from
+the advertised codec/resolution/range.
+
+```python
+from VibraVid.core.downloader import Generic_Downloader
+
+sources = [
+    {"role": "video:hdr10", "url": "<hdr10 m3u8>", "key": "<kid:key>"},
+    {"role": "video:dv",    "url": "<dv m3u8>",    "key": "<kid:key>"},
+    {"role": "audio", "language": "en", "url": "<audio m3u8>", "key": "<kid:key>"},
+    {"role": "subtitle", "language": "en", "url": "<sub url>"},
+]
+
+Generic_Downloader(sources=sources, output_path="./Video/out.mkv").start()
+```
+
+Supported `role` values: `video`, `video:dv`, `video:hdr10` (or any range tag),
+`audio`, `subtitle`. A `video:dv` source is automatically routed as the Dolby Vision
+companion for hybrid muxing. Optional per-source fields: `language`, `name`, `label`,
+`headers`, `cookies`, `protocol`. Limit a test run with `max_segments=N` or
+`max_time="HH:MM:SS"`.
 
 ---
 

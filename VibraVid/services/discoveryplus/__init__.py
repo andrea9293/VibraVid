@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from VibraVid.utils import TVShowManager
-from VibraVid.utils.http_client import create_client, check_region_availability
+from VibraVid.utils.http_client import create_client
 from VibraVid.services._base import site_constants, EntriesManager, Entries
 from VibraVid.services._base.site_search_manager import base_process_search_result, base_search
 
@@ -14,7 +14,6 @@ from .client import get_client
 
 indice = 10
 _useFor = "Film_Serie"
-_region = ["IT"]
 msg = Prompt()
 console = Console()
 entries_manager = EntriesManager()
@@ -33,9 +32,6 @@ def title_search(query: str) -> int:
     """
     entries_manager.clear()
     table_show_manager.clear()
-
-    if not check_region_availability(_region, site_constants.SITE_NAME):
-        return 0
 
     client = get_client()
     url = f"{client.base_url}/cms/routes/search/result"
