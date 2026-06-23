@@ -261,7 +261,7 @@ jobs:
                   name: ${{ matrix.artifact_name }}-bundle
                   path: |
                       dist/${{ matrix.executable }}
-                      dist/${{ matrix.executable }}-agent
+                      dist/${{ matrix.artifact_name }}-agent*
 
     publish-github-release:
         needs: [prepare, build-binaries]

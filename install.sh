@@ -15,11 +15,11 @@ case "$ARCH" in
     *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-# Map OS/arch to GitHub asset name
+# Map OS/arch to GitHub asset name (must end with -agent)
 case "$OS" in
-    linux) ASSET_PATTERN="linux.*${ARCH}" ;;
-    darwin) ASSET_PATTERN="mac.*${ARCH}" ;;
-    mingw*|msys*|cygwin*) ASSET_PATTERN="win.*x64.exe"; BINARY_NAME+=".exe" ;;
+    linux) ASSET_PATTERN="linux.*${ARCH}-agent" ;;
+    darwin) ASSET_PATTERN="mac.*${ARCH}-agent" ;;
+    mingw*|msys*|cygwin*) ASSET_PATTERN="win.*${ARCH}-agent\.exe$"; BINARY_NAME+=".exe" ;;
     *) echo "Unsupported OS: $OS"; exit 1 ;;
 esac
 
