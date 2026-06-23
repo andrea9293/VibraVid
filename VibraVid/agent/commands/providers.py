@@ -1,0 +1,34 @@
+from VibraVid.services._base import load_search_functions
+from VibraVid.agent.output import output_json
+
+
+def register(subparsers):
+    """Register providers command."""
+    parser = subparsers.add_parser("providers", help="List available providers")
+    parser.add_argument(
+        "--available",
+        action="store_true",
+        help="Only show available providers"
+    )
+
+
+def execute(args):
+    """Execute providers command."""
+    try:
+        search_functions = load_search_functions()
+        providers = []
+
+        for func in search_functions.values():
+            providers.append({
+                "index": func.indice,
+                "name": func.module_name,
+                "category": func.use_for.lower(),
+                "available": True
+            })
+
+        if args.available:
+            providers = [p for p in providers if p["available"]]
+
+        output_json(True, data={"providers": providers})
+    except Exception as e:
+        output_json(False, error=str(e))
