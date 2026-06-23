@@ -221,11 +221,47 @@ jobs:
                   --add-data "VibraVid${{ matrix.separator }}VibraVid" \
                   --name=${{ matrix.artifact_name }} manual.py
 
-            - name: Upload executable to Artifacts
+            - name: Build agent executable with PyInstaller
+              shell: bash
+              run: |
+                pyinstaller --onefile \
+                --hidden-import=ua_generator \
+                --hidden-import=bs4 \
+                --hidden-import=rich \
+                --hidden-import=rich._unicode_data \
+                --collect-all rich \
+                --hidden-import=unidecode \
+                --hidden-import=editorconfig \
+                --hidden-import=six \
+                --hidden-import=pathvalidate \
+                --hidden-import=xml.etree.ElementTree \
+                --hidden-import=mutagen \
+                --hidden-import=pywidevine \
+                --hidden-import=pyplayready \
+                --hidden-import=ttconv \
+                --collect-all ttconv \
+                --collect-all mutagen \
+                --hidden-import=curl_cffi \
+                --hidden-import=_cffi_backend \
+                --collect-all curl_cffi \
+                --hidden-import=Cryptodome \
+                --hidden-import=Cryptodome.Cipher \
+                --hidden-import=Cryptodome.Cipher.AES \
+                --hidden-import=Cryptodome.Util \
+                --hidden-import=Cryptodome.Util.Padding \
+                --collect-all Cryptodome \
+                --exclude-module Cryptodome.SelfTest \
+                --additional-hooks-dir=pyinstaller/hooks \
+                --add-data "VibraVid${{ matrix.separator }}VibraVid" \
+                --name=${{ matrix.artifact_name }}-agent agent.py
+
+            - name: Upload executables to Artifacts
               uses: actions/upload-artifact@v4
               with:
-                  name: ${{ matrix.artifact_name }}
-                  path: dist/${{ matrix.executable }}
+                  name: ${{ matrix.artifact_name }}-bundle
+                  path: |
+                      dist/${{ matrix.executable }}
+                      dist/${{ matrix.executable }}-agent
 
     publish-github-release:
         needs: [prepare, build-binaries]
