@@ -1,9 +1,12 @@
+import os
 import sys
 import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from VibraVid.upload.version import __version__
+
+_original_stdout_fd = os.dup(1)
 
 
 def output_json(
@@ -22,7 +25,10 @@ def output_json(
         }
     }
 
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    json_str = json.dumps(result, indent=2, ensure_ascii=False)
+
+    with os.fdopen(os.dup(_original_stdout_fd), 'w') as f:
+        f.write(json_str + '\n')
 
     if exit_on_call:
         sys.exit(0 if success else 1)
