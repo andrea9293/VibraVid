@@ -1,11 +1,19 @@
+import argparse
+
 from VibraVid.agent.setup import check_dependencies, setup_ffmpeg, get_binary_dir
 from VibraVid.agent.output import output_json
+
+SETUP_EXAMPLES = """examples:
+  vibravid-agent setup"""
 
 
 def register(subparsers):
     parser = subparsers.add_parser(
         "setup",
-        help="Download FFmpeg and FFprobe to the binary directory"
+        help="Download FFmpeg/FFprobe dependencies",
+        description="Download and install FFmpeg and FFprobe to the local binary directory. Runs automatically on first use.",
+        epilog=SETUP_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
 

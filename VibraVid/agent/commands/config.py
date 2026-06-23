@@ -1,14 +1,26 @@
+import argparse
+
 from VibraVid.utils import config_manager
 from VibraVid.agent.output import output_json
 
+CONFIG_EXAMPLES = """examples:
+  vibravid-agent config
+  vibravid-agent config --get DOWNLOAD.thread_count
+  vibravid-agent config --set DOWNLOAD.thread_count=20
+  vibravid-agent config --dependencies"""
+
 
 def register(subparsers):
-    """Register config command."""
-    parser = subparsers.add_parser("config", help="Show or modify configuration")
-    parser.add_argument("--show", action="store_true", help="Show full configuration")
-    parser.add_argument("--get", help="Get specific config value (e.g., 'DOWNLOAD.thread_count')")
-    parser.add_argument("--set", help="Set config value (e.g., 'DOWNLOAD.thread_count=20')")
-    parser.add_argument("--dependencies", action="store_true", help="Show dependency paths")
+    parser = subparsers.add_parser(
+        "config",
+        help="Show or modify configuration",
+        description="View or change VibraVid configuration. Without arguments, shows the full config.",
+        epilog=CONFIG_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--get", help="Get value: SECTION.KEY (e.g., DOWNLOAD.thread_count)")
+    parser.add_argument("--set", help="Set value: SECTION.KEY=VALUE")
+    parser.add_argument("--dependencies", action="store_true", help="Show binary dependency paths")
 
 
 def execute(args):
@@ -65,7 +77,7 @@ def execute(args):
             output_json(True, data={"key": key_part, "value": value})
 
         else:
-            output_json(True, data={"config": config_manager._config_data})
+            output_json(True, data={"config": config_manager.config._config_dict})
 
     except Exception as e:
         output_json(False, error=str(e))

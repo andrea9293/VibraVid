@@ -1,15 +1,22 @@
+import argparse
+
 from VibraVid.services._base import load_search_functions
 from VibraVid.agent.output import output_json
 
+PROVIDERS_EXAMPLES = """examples:
+  vibravid-agent providers
+  vibravid-agent providers --available"""
+
 
 def register(subparsers):
-    """Register providers command."""
-    parser = subparsers.add_parser("providers", help="List available providers")
-    parser.add_argument(
-        "--available",
-        action="store_true",
-        help="Only show available providers"
+    parser = subparsers.add_parser(
+        "providers",
+        help="List available providers",
+        description="List all installed streaming providers with their index, name, and content category.",
+        epilog=PROVIDERS_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--available", action="store_true", help="Only show available providers")
 
 
 def execute(args):
@@ -19,10 +26,11 @@ def execute(args):
         providers = []
 
         for func in search_functions.values():
+            category = (func.use_for or "").lower()
             providers.append({
                 "index": func.indice,
                 "name": func.module_name,
-                "category": func.use_for.lower(),
+                "category": category,
                 "available": True
             })
 

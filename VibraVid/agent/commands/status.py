@@ -1,10 +1,22 @@
+import argparse
+
 from VibraVid.agent.job_manager import JobManager
 from VibraVid.agent.output import output_json
 
+STATUS_EXAMPLES = """examples:
+  vibravid-agent status
+  vibravid-agent status --job-id job_20260623_193000_123456
+  vibravid-agent status --all"""
+
 
 def register(subparsers):
-    """Register status command."""
-    parser = subparsers.add_parser("status", help="Check job status")
+    parser = subparsers.add_parser(
+        "status",
+        help="Check job status",
+        description="Show status of background download jobs. Without arguments, shows the 10 most recent.",
+        epilog=STATUS_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--job-id", help="Specific job ID to check")
     parser.add_argument("--all", action="store_true", help="Show all jobs")
 

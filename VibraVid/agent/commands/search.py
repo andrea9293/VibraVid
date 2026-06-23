@@ -1,3 +1,5 @@
+import argparse
+
 from VibraVid.services._base import load_search_functions
 from VibraVid.agent.output import output_json
 
@@ -6,18 +8,31 @@ CATEGORY_MAP = {
     1: "anime",
     2: "film_serie",
     3: "serie",
-    4: "movie",
+    4: "film_serie",
 }
 
 
+SEARCH_EXAMPLES = """examples:
+  vibravid-agent search --query "Breaking Bad" --global
+  vibravid-agent search --provider streamingcommunity --query "The Matrix" --year 1999
+  vibravid-agent search --provider cb01 --query "inception" --category 2
+  vibravid-agent search --query "One Piece" --category 1
+
+categories: 1=Anime  2=Movies/Series  3=Series  4=Movies only"""
+
+
 def register(subparsers):
-    """Register search command."""
-    parser = subparsers.add_parser("search", help="Search for titles")
-    parser.add_argument("--query", "-q", required=True, help="Search query")
-    parser.add_argument("--provider", "-p", help="Provider name or index (optional with --global)")
+    parser = subparsers.add_parser(
+        "search",
+        help="Search for titles across providers",
+        description="Search for movies, series, or anime by title. Returns structured JSON with IDs for download.",
+        epilog=SEARCH_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--query", "-q", required=True, help="Search query (title)")
+    parser.add_argument("--provider", "-p", help="Provider name or index (omit with --global)")
     parser.add_argument("--year", help="Year filter (e.g., '2020' or '1990-2015')")
-    parser.add_argument("--category", type=int, help="Category filter (1=Anime, 2=Movies/Series, 3=Series)")
-    parser.add_argument("--auto-first", action="store_true", help="Auto-select first result")
+    parser.add_argument("--category", type=int, choices=[1, 2, 3, 4], help="Category: 1=Anime 2=Movies&Series 3=Series 4=Movies")
     parser.add_argument("--global", dest="global_search", action="store_true", help="Search across all providers")
 
 
@@ -86,7 +101,7 @@ def execute(args):
                 wanted = CATEGORY_MAP[args.category]
                 target_providers = [
                     f for f in target_providers
-                    if (getattr(f, '_use_for') or '').lower() == wanted
+                    if (f.use_for or '').lower() == wanted
                 ]
 
             for func in target_providers:

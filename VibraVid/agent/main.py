@@ -28,7 +28,9 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="vibravid-agent",
-        description="VibraVid CLI for AI agents - structured JSON output"
+        description="VibraVid Agent CLI - download media via structured JSON output.",
+        epilog="Run 'vibravid-agent <command> --help' for details on each command.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version",
@@ -36,7 +38,12 @@ def main():
         version=f"{__title__} {__version__}"
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+        title="commands",
+        description="Available commands:",
+    )
 
     providers.register(subparsers)
     search.register(subparsers)
