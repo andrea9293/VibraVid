@@ -19,8 +19,9 @@ def main():
     _suppress_stdout()
 
     import argparse
-    from VibraVid.agent.commands import providers, search, download, status, cancel, config
+    from VibraVid.agent.commands import providers, search, download, status, cancel, config, setup
     from VibraVid.agent.output import output_json
+    from VibraVid.agent.setup import check_dependencies, setup_ffmpeg, get_binary_dir
     from VibraVid.upload.version import __version__, __title__
 
     _restore_stdout(_stdout)
@@ -43,8 +44,23 @@ def main():
     status.register(subparsers)
     cancel.register(subparsers)
     config.register(subparsers)
+    setup.register(subparsers)
 
     args = parser.parse_args()
+
+    if args.command != "setup":
+        ok, missing = check_dependencies()
+        if not ok:
+            sys.stderr.write(
+                f"First run: downloading FFmpeg/FFprobe to {get_binary_dir()}...\n"
+            )
+            sys.stderr.flush()
+            result = setup_ffmpeg()
+            if not result["success"]:
+                output_json(False, error=result.get("error"), data=result)
+                sys.exit(1)
+            sys.stderr.write(f"Installed: {', '.join(result.get('installed', []))}\n")
+            sys.stderr.flush()
 
     _suppress_stdout()
 
@@ -56,6 +72,7 @@ def main():
             "status": status.execute,
             "cancel": cancel.execute,
             "config": config.execute,
+            "setup": setup.execute,
         }
 
         commands[args.command](args)
